@@ -1,0 +1,96 @@
+package controllers
+
+import (
+	"PinguinMobile/services"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+var authService *services.AuthService
+
+func SetAuthService(service *services.AuthService) {
+	authService = service
+}
+
+func RegisterParent(c *gin.Context) {
+	var input struct {
+		Lang     string `json:"lang" binding:"required"`
+		Name     string `json:"name" binding:"required"`
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=8"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	parent, token, err := authService.RegisterParent(input.Lang, input.Name, input.Email, input.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": true, "token": token, "data": parent})
+}
+
+func LoginParent(c *gin.Context) {
+	var input struct {
+		Email    string `json:"email" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	parent, token, err := authService.LoginParent(input.Email, input.Password)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": parent})
+}
+
+func RegisterChild(c *gin.Context) {
+	var input struct {
+		Lang string `json:"lang" binding:"required"`
+		Code string `json:"code" binding:"required"`
+		Name string `json:"name"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	child, token, err := authService.RegisterChild(input.Lang, input.Code, input.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": true, "token": token, "data": child})
+}
+
+func TokenVerify(c *gin.Context) {
+	var input struct {
+		UID string `json:"uid" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	user, err := authService.VerifyToken(input.UID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": true, "user": user})
+}
