@@ -6,6 +6,7 @@ import (
 	"PinguinMobile/routes"
 	"PinguinMobile/services"
 	"log"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -15,7 +16,7 @@ func main() {
 	// Load environment variables from .env file
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Println("Error loading .env file, using environment variables")
 	}
 
 	config.InitDatabase()
@@ -37,5 +38,10 @@ func main() {
 	// Register routes
 	routes.RegisterRoutes(r)
 
-	r.Run(":8000")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+
+	r.Run(":" + port)
 }
