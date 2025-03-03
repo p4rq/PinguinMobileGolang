@@ -27,7 +27,7 @@ func RegisterRoutes(r *gin.Engine) {
 	parentsUnbind := r.Group("/parents/unbind")
 	parentsUnbind.Use(middlewares.AuthMiddleware())
 	{
-		parentsUnbind.DELETE("/:parentFirebaseUid/:childFirebaseUid", controllers.UnbindChild)
+		parentsUnbind.DELETE("/", controllers.UnbindChild)
 	}
 
 	// Separate route group for monitor routes to avoid conflicts

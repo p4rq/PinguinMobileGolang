@@ -80,11 +80,18 @@ func DeleteParent(c *gin.Context) {
 }
 
 func UnbindChild(c *gin.Context) {
-	parentFirebaseUID := c.Param("parentFirebaseUid")
-	childFirebaseUID := c.Param("childFirebaseUid")
+	var request struct {
+		ParentFirebaseUID string `json:"parentFirebaseUid" binding:"required"`
+		ChildFirebaseUID  string `json:"childFirebaseUid" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", parentFirebaseUID).First(&parent).Error; err != nil {
+	if err := DB.Where("firebase_uid = ?", request.ParentFirebaseUID).First(&parent).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
@@ -93,7 +100,7 @@ func UnbindChild(c *gin.Context) {
 	json.Unmarshal([]byte(parent.Family), &family)
 	childIndex := -1
 	for i, member := range family {
-		if member["firebase_uid"] == childFirebaseUID {
+		if member["firebase_uid"] == request.ChildFirebaseUID {
 			childIndex = i
 			break
 		}
@@ -109,7 +116,7 @@ func UnbindChild(c *gin.Context) {
 	DB.Save(&parent)
 
 	var child models.Child
-	if err := DB.Where("firebase_uid = ?", childFirebaseUID).First(&child).Error; err != nil {
+	if err := DB.Where("firebase_uid = ?", request.ChildFirebaseUID).First(&child).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Child not found"})
 		return
 	}
@@ -117,7 +124,7 @@ func UnbindChild(c *gin.Context) {
 	child.Family = "[]"
 	DB.Save(&child)
 
-	c.JSON(http.StatusOK, gin.H{"message": true})
+	c.JSON(http.StatusOK, gin.H{"message": "Child unbound successfully"})
 }
 
 func MonitorChildrenUsage(c *gin.Context) {
