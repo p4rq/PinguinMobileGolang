@@ -3,6 +3,7 @@ package services
 import (
 	"PinguinMobile/models"
 	"encoding/json"
+	"time"
 
 	"firebase.google.com/go/auth"
 	"gorm.io/gorm"
@@ -156,8 +157,30 @@ func (s *ChildService) MonitorChild(firebaseUID string, sessions []models.Sessio
 	}
 
 	sessionsData := usageData["sessions"].([]interface{})
-	for _, session := range sessions {
-		sessionsData = append(sessionsData, session)
+	for _, newSession := range sessions {
+		merged := false
+		for i, existingSession := range sessionsData {
+			existingSessionMap := existingSession.(map[string]interface{})
+			if existingSessionMap["app"] == newSession.App {
+				existingTimestamp, _ := time.Parse(time.RFC3339, existingSessionMap["timestamp"].(string))
+				newTimestamp, _ := time.Parse(time.RFC3339, newSession.Timestamp)
+				if newTimestamp.Sub(existingTimestamp) < 24*time.Hour {
+					existingDuration := existingSessionMap["duration"].(float64)
+					newDuration := newSession.Duration
+					existingSessionMap["duration"] = existingDuration + newDuration
+					sessionsData[i] = existingSessionMap
+					merged = true
+					break
+				}
+			}
+		}
+		if !merged {
+			sessionsData = append(sessionsData, map[string]interface{}{
+				"app":       newSession.App,
+				"duration":  newSession.Duration,
+				"timestamp": newSession.Timestamp,
+			})
+		}
 	}
 	usageData["sessions"] = sessionsData
 
