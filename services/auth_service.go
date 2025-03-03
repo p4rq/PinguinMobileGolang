@@ -168,6 +168,10 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 		"lang":         child.Lang,
 		"firebase_uid": child.FirebaseUID,
 		"isBinded":     child.IsBinded,
+		"usage_data":   child.UsageData,
+		"gender":       child.Gender,
+		"age":          child.Age,
+		"birthday":     child.Birthday,
 	})
 	familyJson, _ := json.Marshal(family)
 	parent.Family = string(familyJson)
