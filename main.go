@@ -3,6 +3,7 @@ package main
 import (
 	"PinguinMobile/config"
 	"PinguinMobile/controllers"
+	"PinguinMobile/repositories/impl"
 	"PinguinMobile/routes"
 	"PinguinMobile/services"
 	"log"
@@ -19,25 +20,29 @@ func main() {
 		log.Println("Error loading .env file, using environment variables")
 	}
 
+	// Initialize database and Firebase
 	config.InitDatabase()
 	config.InitFirebase()
 
-	// Pass the DB and FirebaseAuth instances to the controllers
-	controllers.SetDB(config.DB)
-	controllers.SetFirebaseAuth(config.FirebaseAuth)
+	// Initialize repositories
+	parentRepo := impl.NewParentRepository(config.DB)
+	childRepo := impl.NewChildRepository(config.DB)
 
 	// Initialize services
 	authService := services.NewAuthService(config.DB, config.FirebaseAuth)
-	controllers.SetAuthService(authService)
+	childService := services.NewChildService(childRepo, parentRepo, config.FirebaseAuth)
 
-	childService := services.NewChildService(config.DB, config.FirebaseAuth)
+	// Set services in controllers
+	controllers.SetAuthService(authService)
 	controllers.SetChildService(childService)
 
+	// Initialize Gin router
 	r := gin.Default()
 
 	// Register routes
 	routes.RegisterRoutes(r)
 
+	// Start the server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"

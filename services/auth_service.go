@@ -146,10 +146,18 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	}
 
 	// Create user in local database
+	familyData := map[string]interface{}{
+		"parent_id":           parent.ID,
+		"parent_name":         parent.Name,
+		"parent_email":        parent.Email,
+		"parent_firebase_uid": parent.FirebaseUID,
+	}
+	familyJSON, _ := json.Marshal(familyData)
+
 	child := models.Child{
 		Lang:        lang,
 		Name:        name,
-		Family:      `{"parent_id":` + strconv.Itoa(int(parent.ID)) + `}`,
+		Family:      string(familyJSON),
 		FirebaseUID: firebaseUid,
 		IsBinded:    true,
 		Code:        childCode,
