@@ -10,5 +10,4 @@ type Parent struct {
 	FirebaseUID string `json:"firebase_uid"`
 	Role        string `json:"role"`
 	Code        string `json:"code"`
-	FamilyCode  string `json:"family_code"`
 }

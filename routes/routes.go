@@ -47,6 +47,6 @@ func RegisterRoutes(r *gin.Engine) {
 		children.DELETE("/:firebase_uid", controllers.DeleteChild)
 		children.POST("/:firebase_uid/logout", controllers.LogoutChild)
 		children.POST("/:firebase_uid/monitor", controllers.MonitorChild)
-		children.POST("/:firebase_uid/rebind", controllers.RebindChild)
+		children.POST("/rebind", controllers.RebindChild)
 	}
 }

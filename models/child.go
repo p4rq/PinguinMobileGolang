@@ -12,4 +12,5 @@ type Child struct {
 	Gender      string `json:"gender"`
 	Age         int    `json:"age"`
 	Birthday    string `json:"birthday"`
+	Code        string `json:"code"`
 }

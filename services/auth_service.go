@@ -55,17 +55,6 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		}
 	}
 
-	// Generate additional unique 4-digit family code
-	var familyCode string
-	for {
-		familyCode = strconv.Itoa(1000 + rand.Intn(9000))
-		var count int64
-		s.DB.Model(&models.Parent{}).Where("family_code = ?", familyCode).Count(&count)
-		if count == 0 {
-			break
-		}
-	}
-
 	// Create user in local database
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	parent := models.Parent{
@@ -76,7 +65,6 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		Role:        "parent",
 		Family:      "[]",
 		Code:        code,
-		FamilyCode:  familyCode,
 		FirebaseUID: firebaseUid,
 	}
 
@@ -146,6 +134,17 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	}
 	firebaseUid := createdUser.UID
 
+	// Generate unique code for the child
+	var childCode string
+	for {
+		childCode = strconv.Itoa(1000 + rand.Intn(9000))
+		var count int64
+		s.DB.Model(&models.Child{}).Where("code = ?", childCode).Count(&count)
+		if count == 0 {
+			break
+		}
+	}
+
 	// Create user in local database
 	child := models.Child{
 		Lang:        lang,
@@ -153,6 +152,7 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 		Family:      `{"parent_id":` + strconv.Itoa(int(parent.ID)) + `}`,
 		FirebaseUID: firebaseUid,
 		IsBinded:    true,
+		Code:        childCode,
 	}
 
 	if result := s.DB.Create(&child); result.Error != nil {
@@ -172,11 +172,12 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 		"gender":       child.Gender,
 		"age":          child.Age,
 		"birthday":     child.Birthday,
+		"code":         child.Code,
 	})
 	familyJson, _ := json.Marshal(family)
 	parent.Family = string(familyJson)
 
-	// Generate new unique 4-digit code
+	// Generate new unique 4-digit code for the parent
 	var newCode string
 	for {
 		newCode = strconv.Itoa(1000 + rand.Intn(9000))

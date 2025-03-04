@@ -93,20 +93,21 @@ func MonitorChild(c *gin.Context) {
 }
 
 func RebindChild(c *gin.Context) {
-	firebaseUID := c.Param("firebase_uid")
-	var input struct {
-		FamilyCode string `json:"family_code" binding:"required"`
+	var request struct {
+		ChildCode         string `json:"childCode" binding:"required"`
+		ParentFirebaseUID string `json:"parentFirebaseUID" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	child, err := childService.RebindChild(firebaseUID, input.FamilyCode)
+	child, err := childService.RebindChild(request.ChildCode, request.ParentFirebaseUID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Child rebinded successfully", "data": child})
+	c.JSON(http.StatusOK, child)
 }

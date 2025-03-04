@@ -193,14 +193,14 @@ func (s *ChildService) MonitorChild(firebaseUID string, sessions []models.Sessio
 	return child, nil
 }
 
-func (s *ChildService) RebindChild(firebaseUID, familyCode string) (models.Child, error) {
+func (s *ChildService) RebindChild(childCode, parentFirebaseUID string) (models.Child, error) {
 	var child models.Child
-	if err := s.DB.Where("firebase_uid = ?", firebaseUID).First(&child).Error; err != nil {
+	if err := s.DB.Where("code = ?", childCode).First(&child).Error; err != nil {
 		return models.Child{}, err
 	}
 
 	var parent models.Parent
-	if err := s.DB.Where("family_code = ?", familyCode).First(&parent).Error; err != nil {
+	if err := s.DB.Where("firebase_uid = ?", parentFirebaseUID).First(&parent).Error; err != nil {
 		return models.Child{}, err
 	}
 
@@ -236,6 +236,7 @@ func (s *ChildService) RebindChild(firebaseUID, familyCode string) (models.Child
 				"birthday":     child.Birthday,
 				"firebase_uid": child.FirebaseUID,
 				"isBinded":     true,
+				"code":         child.Code,
 			}
 			childExists = true
 			break
@@ -253,6 +254,7 @@ func (s *ChildService) RebindChild(firebaseUID, familyCode string) (models.Child
 			"birthday":     child.Birthday,
 			"firebase_uid": child.FirebaseUID,
 			"isBinded":     true,
+			"code":         child.Code,
 		})
 	}
 
