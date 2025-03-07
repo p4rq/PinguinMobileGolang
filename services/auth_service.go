@@ -2,9 +2,11 @@ package services
 
 import (
 	"PinguinMobile/models"
+	"PinguinMobile/repositories"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"time"
@@ -23,12 +25,14 @@ type Claims struct {
 }
 
 type AuthService struct {
+	ParentRepo   repositories.ParentRepository
+	ChildRepo    repositories.ChildRepository
 	DB           *gorm.DB
 	FirebaseAuth *auth.Client
 }
 
-func NewAuthService(db *gorm.DB, firebaseAuth *auth.Client) *AuthService {
-	return &AuthService{DB: db, FirebaseAuth: firebaseAuth}
+func NewAuthService(parentRepo repositories.ParentRepository, childRepo repositories.ChildRepository, firebaseAuth *auth.Client) *AuthService {
+	return &AuthService{ParentRepo: parentRepo, ChildRepo: childRepo, FirebaseAuth: firebaseAuth}
 }
 
 func (s *AuthService) RegisterParent(lang, name, email, password string) (models.Parent, string, error) {
@@ -49,7 +53,7 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 	for {
 		code = strconv.Itoa(1000 + rand.Intn(9000))
 		var count int64
-		s.DB.Model(&models.Parent{}).Where("code = ?", code).Count(&count)
+		s.ParentRepo.CountByCode(code, &count)
 		if count == 0 {
 			break
 		}
@@ -57,6 +61,7 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 
 	// Create user in local database
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	fmt.Printf("Hashed password: %s\n", hashedPassword) // Отладочное сообщение
 	parent := models.Parent{
 		Lang:        lang,
 		Name:        name,
@@ -68,8 +73,8 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		FirebaseUID: firebaseUid,
 	}
 
-	if result := s.DB.Create(&parent); result.Error != nil {
-		return models.Parent{}, "", result.Error
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return models.Parent{}, "", err
 	}
 
 	// Generate JWT token
@@ -91,12 +96,20 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 }
 
 func (s *AuthService) LoginParent(email, password string) (models.Parent, string, error) {
-	var parent models.Parent
-	if err := s.DB.Where("email = ?", email).First(&parent).Error; err != nil {
+	parent, err := s.ParentRepo.FindByEmail(email)
+	if err != nil {
 		return models.Parent{}, "", err
 	}
 
+	fmt.Printf("Stored hashed password: %s\n", parent.Password) // Отладочное сообщение
+	fmt.Printf("Provided password: %s\n", password)             // Отладочное сообщение
+
+	// Проверка длины пароля
+	fmt.Printf("Length of provided password: %d\n", len(password))             // Отладочное сообщение
+	fmt.Printf("Length of stored hashed password: %d\n", len(parent.Password)) // Отладочное сообщение
+
 	if err := bcrypt.CompareHashAndPassword([]byte(parent.Password), []byte(password)); err != nil {
+		fmt.Printf("Password comparison error: %v\n", err) // Отладочное сообщение
 		return models.Parent{}, "", err
 	}
 
@@ -119,8 +132,8 @@ func (s *AuthService) LoginParent(email, password string) (models.Parent, string
 }
 
 func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, string, error) {
-	var parent models.Parent
-	if err := s.DB.Where("code = ?", code).First(&parent).Error; err != nil {
+	parent, err := s.ParentRepo.FindByCode(code)
+	if err != nil {
 		return models.Child{}, "", err
 	}
 
@@ -139,7 +152,7 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	for {
 		childCode = strconv.Itoa(1000 + rand.Intn(9000))
 		var count int64
-		s.DB.Model(&models.Child{}).Where("code = ?", childCode).Count(&count)
+		s.ChildRepo.CountByCode(childCode, &count)
 		if count == 0 {
 			break
 		}
@@ -163,8 +176,8 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 		Code:        childCode,
 	}
 
-	if result := s.DB.Create(&child); result.Error != nil {
-		return models.Child{}, "", result.Error
+	if err := s.ChildRepo.Save(child); err != nil {
+		return models.Child{}, "", err
 	}
 
 	// Update parent's family field
@@ -190,13 +203,13 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	for {
 		newCode = strconv.Itoa(1000 + rand.Intn(9000))
 		var count int64
-		s.DB.Model(&models.Parent{}).Where("code = ?", newCode).Count(&count)
+		s.ParentRepo.CountByCode(newCode, &count)
 		if count == 0 {
 			break
 		}
 	}
 	parent.Code = newCode
-	s.DB.Save(&parent)
+	s.ParentRepo.Save(parent)
 
 	// Generate JWT token
 	expirationTime := time.Now().Add(24 * time.Hour)
@@ -220,11 +233,13 @@ func (s *AuthService) VerifyToken(uid string) (interface{}, error) {
 	var parent models.Parent
 	var child models.Child
 
-	if err := s.DB.Where("firebase_uid = ?", uid).First(&parent).Error; err == nil {
+	parent, err := s.ParentRepo.FindByFirebaseUID(uid)
+	if err == nil {
 		return parent, nil
 	}
 
-	if err := s.DB.Where("firebase_uid = ?", uid).First(&child).Error; err == nil {
+	child, err = s.ChildRepo.FindByFirebaseUID(uid)
+	if err == nil {
 		return child, nil
 	}
 

@@ -2,34 +2,30 @@ package services
 
 import (
 	"PinguinMobile/models"
+	"PinguinMobile/repositories"
 	"encoding/json"
 	"errors"
+	"fmt"
 
-	"firebase.google.com/go/auth"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 type ParentService struct {
-	DB           *gorm.DB
-	FirebaseAuth *auth.Client
+	ParentRepo repositories.ParentRepository
+	ChildRepo  repositories.ChildRepository
 }
 
-func NewParentService(db *gorm.DB, firebaseAuth *auth.Client) *ParentService {
-	return &ParentService{DB: db, FirebaseAuth: firebaseAuth}
+func NewParentService(parentRepo repositories.ParentRepository, childRepo repositories.ChildRepository) *ParentService {
+	return &ParentService{ParentRepo: parentRepo, ChildRepo: childRepo}
 }
 
 func (s *ParentService) ReadParent(firebaseUID string) (models.Parent, error) {
-	var parent models.Parent
-	if err := s.DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
-		return models.Parent{}, err
-	}
-	return parent, nil
+	return s.ParentRepo.FindByFirebaseUID(firebaseUID)
 }
 
 func (s *ParentService) UpdateParent(firebaseUID string, input models.Parent) (models.Parent, error) {
-	var parent models.Parent
-	if err := s.DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
+	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
 		return models.Parent{}, err
 	}
 
@@ -47,7 +43,7 @@ func (s *ParentService) UpdateParent(firebaseUID string, input models.Parent) (m
 		parent.Password = string(hashedPassword)
 	}
 
-	if err := s.DB.Save(&parent).Error; err != nil {
+	if err := s.ParentRepo.Save(parent); err != nil {
 		return models.Parent{}, err
 	}
 
@@ -55,19 +51,19 @@ func (s *ParentService) UpdateParent(firebaseUID string, input models.Parent) (m
 }
 
 func (s *ParentService) DeleteParent(firebaseUID string) error {
-	var parent models.Parent
-	if err := s.DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
-		return err
-	}
-	if err := s.DB.Delete(&parent).Error; err != nil {
-		return err
-	}
-	return nil
+	return s.ParentRepo.DeleteByFirebaseUID(firebaseUID)
 }
 
+func (s *ParentService) ReadChild(firebaseUID string) (models.Child, error) {
+	return s.ChildRepo.FindByFirebaseUID(firebaseUID)
+}
+
+func (s *ParentService) UpdateChild(child models.Child) error {
+	return s.ChildRepo.Save(child)
+}
 func (s *ParentService) UnbindChild(parentFirebaseUID, childFirebaseUID string) error {
-	var parent models.Parent
-	if err := s.DB.Where("firebase_uid = ?", parentFirebaseUID).First(&parent).Error; err != nil {
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
 		return err
 	}
 
@@ -75,6 +71,7 @@ func (s *ParentService) UnbindChild(parentFirebaseUID, childFirebaseUID string) 
 	json.Unmarshal([]byte(parent.Family), &family)
 	childIndex := -1
 	for i, member := range family {
+		fmt.Printf("Checking member: %v\n", member) // Отладочное сообщение
 		if member["firebase_uid"] == childFirebaseUID {
 			childIndex = i
 			break
@@ -87,22 +84,26 @@ func (s *ParentService) UnbindChild(parentFirebaseUID, childFirebaseUID string) 
 	family = append(family[:childIndex], family[childIndex+1:]...)
 	familyJson, _ := json.Marshal(family)
 	parent.Family = string(familyJson)
-	s.DB.Save(&parent)
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return err
+	}
 
-	var child models.Child
-	if err := s.DB.Where("firebase_uid = ?", childFirebaseUID).First(&child).Error; err != nil {
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
 		return err
 	}
 	child.IsBinded = false
 	child.Family = "[]"
-	s.DB.Save(&child)
+	if err := s.ChildRepo.Save(child); err != nil {
+		return err
+	}
 
 	return nil
 }
 
 func (s *ParentService) MonitorChildrenUsage(firebaseUID string) ([]map[string]interface{}, error) {
-	var parent models.Parent
-	if err := s.DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
+	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -111,8 +112,8 @@ func (s *ParentService) MonitorChildrenUsage(firebaseUID string) ([]map[string]i
 
 	var usageData []map[string]interface{}
 	for _, member := range family {
-		var child models.Child
-		if err := s.DB.Where("firebase_uid = ?", member["firebase_uid"]).First(&child).Error; err == nil {
+		child, err := s.ChildRepo.FindByFirebaseUID(member["firebase_uid"].(string))
+		if err == nil {
 			var childUsageData map[string]interface{}
 			json.Unmarshal([]byte(child.UsageData), &childUsageData)
 			usageData = append(usageData, map[string]interface{}{
@@ -127,13 +128,13 @@ func (s *ParentService) MonitorChildrenUsage(firebaseUID string) ([]map[string]i
 }
 
 func (s *ParentService) MonitorChildUsage(parentFirebaseUID, childFirebaseUID string) (map[string]interface{}, error) {
-	var parent models.Parent
-	if err := s.DB.Where("firebase_uid = ?", parentFirebaseUID).First(&parent).Error; err != nil {
+	_, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
 		return nil, err
 	}
 
-	var child models.Child
-	if err := s.DB.Where("firebase_uid = ?", childFirebaseUID).First(&child).Error; err != nil {
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
 		return nil, err
 	}
 

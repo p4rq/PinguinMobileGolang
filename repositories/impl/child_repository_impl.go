@@ -22,6 +22,7 @@ func (r *ChildRepositoryImpl) FindByFirebaseUID(firebaseUID string) (models.Chil
 	}
 	return child, nil
 }
+
 func (r *ChildRepositoryImpl) FindByCode(code string) (models.Child, error) {
 	var child models.Child
 	if err := r.DB.Where("code = ?", code).First(&child).Error; err != nil {
@@ -30,9 +31,14 @@ func (r *ChildRepositoryImpl) FindByCode(code string) (models.Child, error) {
 	return child, nil
 }
 
+func (r *ChildRepositoryImpl) CountByCode(code string, count *int64) error {
+	return r.DB.Model(&models.Child{}).Where("code = ?", code).Count(count).Error
+}
+
 func (r *ChildRepositoryImpl) Save(child models.Child) error {
 	return r.DB.Save(&child).Error
 }
+
 func (r *ChildRepositoryImpl) Delete(child models.Child) error {
 	return r.DB.Delete(&child).Error
 }

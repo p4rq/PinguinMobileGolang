@@ -1,30 +1,24 @@
 package controllers
 
 import (
-	"PinguinMobile/models"
+	"PinguinMobile/services"
 	"encoding/json"
 	"net/http"
 
-	"firebase.google.com/go/auth"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
-var DB *gorm.DB
-var FirebaseAuth *auth.Client
+var parentService *services.ParentService
 
-func SetDB(db *gorm.DB) {
-	DB = db
+func SetParentService(service *services.ParentService) {
+	parentService = service
 }
 
-func SetFirebaseAuth(authClient *auth.Client) {
-	FirebaseAuth = authClient
-}
 func ReadParent(c *gin.Context) {
 	firebaseUID := c.Param("firebase_uid")
-	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
+	parent, err := parentService.ReadParent(firebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
@@ -44,8 +38,8 @@ func UpdateParent(c *gin.Context) {
 		return
 	}
 
-	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
+	parent, err := parentService.ReadParent(firebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
@@ -64,18 +58,21 @@ func UpdateParent(c *gin.Context) {
 		parent.Password = string(hashedPassword)
 	}
 
-	DB.Save(&parent)
-	c.JSON(http.StatusOK, gin.H{"message": "Parent updated successfully", "data": parent})
+	updatedParent, err := parentService.UpdateParent(firebaseUID, parent)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Parent updated successfully", "data": updatedParent})
 }
 
 func DeleteParent(c *gin.Context) {
 	firebaseUID := c.Param("firebase_uid")
-	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", firebaseUID).First(&parent).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
+	if err := parentService.DeleteParent(firebaseUID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	DB.Delete(&parent)
 	c.JSON(http.StatusOK, gin.H{"message": "Parent deleted successfully"})
 }
 
@@ -90,8 +87,8 @@ func UnbindChild(c *gin.Context) {
 		return
 	}
 
-	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", request.ParentFirebaseUID).First(&parent).Error; err != nil {
+	parent, err := parentService.ReadParent(request.ParentFirebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
@@ -113,18 +110,25 @@ func UnbindChild(c *gin.Context) {
 	family = append(family[:childIndex], family[childIndex+1:]...)
 	familyJson, _ := json.Marshal(family)
 	parent.Family = string(familyJson)
-	DB.Save(&parent)
+	updatedParent, err := parentService.UpdateParent(request.ParentFirebaseUID, parent)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	var child models.Child
-	if err := DB.Where("firebase_uid = ?", request.ChildFirebaseUID).First(&child).Error; err != nil {
+	child, err := parentService.ReadChild(request.ChildFirebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Child not found"})
 		return
 	}
 	child.IsBinded = false
 	child.Family = "[]"
-	DB.Save(&child)
+	if err := parentService.UpdateChild(child); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Child unbound successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Child unbound successfully", "parent": updatedParent})
 }
 
 func MonitorChildrenUsage(c *gin.Context) {
@@ -136,8 +140,8 @@ func MonitorChildrenUsage(c *gin.Context) {
 		return
 	}
 
-	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", input.FirebaseUID).First(&parent).Error; err != nil {
+	parent, err := parentService.ReadParent(input.FirebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
@@ -147,12 +151,14 @@ func MonitorChildrenUsage(c *gin.Context) {
 
 	var usageData []map[string]interface{}
 	for _, member := range family {
-		var child models.Child
-		if err := DB.Where("firebase_uid = ?", member["firebase_uid"]).First(&child).Error; err == nil {
+		child, err := parentService.ReadChild(member["firebase_uid"].(string))
+		if err == nil {
+			var childUsageData map[string]interface{}
+			json.Unmarshal([]byte(child.UsageData), &childUsageData)
 			usageData = append(usageData, map[string]interface{}{
 				"child_id":   child.FirebaseUID,
 				"name":       child.Name,
-				"usage_data": json.Unmarshal([]byte(child.UsageData), &usageData),
+				"usage_data": childUsageData,
 			})
 		}
 	}
@@ -170,14 +176,14 @@ func MonitorChildUsage(c *gin.Context) {
 		return
 	}
 
-	var parent models.Parent
-	if err := DB.Where("firebase_uid = ?", input.ParentFirebaseUID).First(&parent).Error; err != nil {
+	_, err := parentService.ReadParent(input.ParentFirebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
 
-	var child models.Child
-	if err := DB.Where("firebase_uid = ?", input.ChildFirebaseUID).First(&child).Error; err != nil {
+	child, err := parentService.ReadChild(input.ChildFirebaseUID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Child not found"})
 		return
 	}

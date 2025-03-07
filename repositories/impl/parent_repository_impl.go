@@ -23,6 +23,26 @@ func (r *ParentRepositoryImpl) FindByFirebaseUID(firebaseUID string) (models.Par
 	return parent, nil
 }
 
+func (r *ParentRepositoryImpl) FindByEmail(email string) (models.Parent, error) {
+	var parent models.Parent
+	if err := r.DB.Where("email = ?", email).First(&parent).Error; err != nil {
+		return models.Parent{}, err
+	}
+	return parent, nil
+}
+
+func (r *ParentRepositoryImpl) FindByCode(code string) (models.Parent, error) {
+	var parent models.Parent
+	if err := r.DB.Where("code = ?", code).First(&parent).Error; err != nil {
+		return models.Parent{}, err
+	}
+	return parent, nil
+}
+
+func (r *ParentRepositoryImpl) CountByCode(code string, count *int64) error {
+	return r.DB.Model(&models.Parent{}).Where("code = ?", code).Count(count).Error
+}
+
 func (r *ParentRepositoryImpl) Save(parent models.Parent) error {
 	return r.DB.Save(&parent).Error
 }

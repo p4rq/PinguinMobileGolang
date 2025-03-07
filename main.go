@@ -29,12 +29,14 @@ func main() {
 	childRepo := impl.NewChildRepository(config.DB)
 
 	// Initialize services
-	authService := services.NewAuthService(config.DB, config.FirebaseAuth)
+	authService := services.NewAuthService(parentRepo, childRepo, config.FirebaseAuth)
 	childService := services.NewChildService(childRepo, parentRepo, config.FirebaseAuth)
+	parentService := services.NewParentService(parentRepo, childRepo)
 
 	// Set services in controllers
 	controllers.SetAuthService(authService)
 	controllers.SetChildService(childService)
+	controllers.SetParentService(parentService)
 
 	// Initialize Gin router
 	r := gin.Default()
