@@ -59,18 +59,23 @@ func LogoutChild(c *gin.Context) {
 }
 
 func MonitorChild(c *gin.Context) {
-	firebaseUID := c.Param("firebase_uid")
-	var sessions []models.Session
-	if err := c.ShouldBindJSON(&sessions); err != nil {
+	var request struct {
+		Sessions []models.Session `json:"sessions" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	child, err := childService.MonitorChild(firebaseUID, sessions)
+
+	childFirebaseUID := c.Param("firebase_uid")
+	err := childService.MonitorChild(childFirebaseUID, request.Sessions)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, child)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Child usage monitored successfully"})
 }
 
 func RebindChild(c *gin.Context) {

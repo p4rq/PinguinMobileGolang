@@ -169,3 +169,44 @@ func MonitorChildUsage(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": true, "data": usageData})
 }
+func BlockApps(c *gin.Context) {
+	var request struct {
+		ParentFirebaseUID string   `json:"parentFirebaseUid" binding:"required"`
+		ChildFirebaseUID  string   `json:"childFirebaseUid" binding:"required"`
+		Apps              []string `json:"apps" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := parentService.BlockApps(request.ParentFirebaseUID, request.ChildFirebaseUID, request.Apps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Apps blocked successfully"})
+}
+
+func UnblockApps(c *gin.Context) {
+	var request struct {
+		ParentFirebaseUID string   `json:"parentFirebaseUid" binding:"required"`
+		ChildFirebaseUID  string   `json:"childFirebaseUid" binding:"required"`
+		Apps              []string `json:"apps" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := parentService.UnblockApps(request.ParentFirebaseUID, request.ChildFirebaseUID, request.Apps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Apps unblocked successfully"})
+}

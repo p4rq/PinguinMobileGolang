@@ -156,3 +156,72 @@ func (s *ParentService) MonitorChildUsage(parentFirebaseUID, childFirebaseUID st
 
 	return usageData, nil
 }
+
+func (s *ParentService) BlockApps(parentFirebaseUID, childFirebaseUID string, apps []string) error {
+	_, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	var blockedApps []string
+	if child.BlockedApps != "" {
+		json.Unmarshal([]byte(child.BlockedApps), &blockedApps)
+	}
+
+	blockedApps = append(blockedApps, apps...)
+	blockedAppsJson, err := json.Marshal(blockedApps)
+	if err != nil {
+		return errors.New("failed to marshal blocked apps JSON")
+	}
+
+	child.BlockedApps = string(blockedAppsJson)
+	if err := s.ChildRepo.Save(child); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Метод для разблокировки приложений
+func (s *ParentService) UnblockApps(parentFirebaseUID, childFirebaseUID string, apps []string) error {
+	_, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	var blockedApps []string
+	if child.BlockedApps != "" {
+		json.Unmarshal([]byte(child.BlockedApps), &blockedApps)
+	}
+
+	for _, app := range apps {
+		for i, blockedApp := range blockedApps {
+			if blockedApp == app {
+				blockedApps = append(blockedApps[:i], blockedApps[i+1:]...)
+				break
+			}
+		}
+	}
+
+	blockedAppsJson, err := json.Marshal(blockedApps)
+	if err != nil {
+		return errors.New("failed to marshal blocked apps JSON")
+	}
+
+	child.BlockedApps = string(blockedAppsJson)
+	if err := s.ChildRepo.Save(child); err != nil {
+		return err
+	}
+
+	return nil
+}

@@ -155,58 +155,45 @@ func (s *ChildService) LogoutChild(firebaseUID string) (models.Child, error) {
 	return child, nil
 }
 
-func (s *ChildService) MonitorChild(firebaseUID string, sessions []models.Session) (models.Child, error) {
-	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+func (s *ChildService) MonitorChild(childFirebaseUID string, sessions []models.Session) error {
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
 	if err != nil {
-		return models.Child{}, err
+		return errors.New("child not found")
 	}
 
-	var usageData map[string]interface{}
+	var existingSessions []models.Session
 	if child.UsageData != "" {
-		json.Unmarshal([]byte(child.UsageData), &usageData)
-	} else {
-		usageData = make(map[string]interface{})
+		if err := json.Unmarshal([]byte(child.UsageData), &existingSessions); err != nil {
+			return errors.New("failed to unmarshal existing sessions JSON")
+		}
 	}
 
-	if usageData["sessions"] == nil {
-		usageData["sessions"] = []interface{}{}
-	}
-
-	sessionsData := usageData["sessions"].([]interface{})
+	// Объединение сессий
 	for _, newSession := range sessions {
 		merged := false
-		for i, existingSession := range sessionsData {
-			existingSessionMap := existingSession.(map[string]interface{})
-			if existingSessionMap["app"] == newSession.App {
-				existingTimestamp, _ := time.Parse(time.RFC3339, existingSessionMap["timestamp"].(string))
-				newTimestamp, _ := time.Parse(time.RFC3339, newSession.Timestamp)
-				if newTimestamp.Sub(existingTimestamp) < 24*time.Hour {
-					existingDuration := existingSessionMap["duration"].(float64)
-					newDuration := newSession.Duration
-					existingSessionMap["duration"] = existingDuration + newDuration
-					sessionsData[i] = existingSessionMap
-					merged = true
-					break
-				}
+		for i, existingSession := range existingSessions {
+			if existingSession.App == newSession.App && newSession.Timestamp.Sub(existingSession.Timestamp) < 24*time.Hour {
+				existingSessions[i].Duration += newSession.Duration
+				merged = true
+				break
 			}
 		}
 		if !merged {
-			sessionsData = append(sessionsData, map[string]interface{}{
-				"app":       newSession.App,
-				"duration":  newSession.Duration,
-				"timestamp": newSession.Timestamp,
-			})
+			existingSessions = append(existingSessions, newSession)
 		}
 	}
-	usageData["sessions"] = sessionsData
 
-	usageDataJSON, _ := json.Marshal(usageData)
-	child.UsageData = string(usageDataJSON)
-	if err := s.ChildRepo.Save(child); err != nil {
-		return models.Child{}, err
+	sessionsJson, err := json.Marshal(existingSessions)
+	if err != nil {
+		return errors.New("failed to marshal sessions JSON")
 	}
 
-	return child, nil
+	child.UsageData = string(sessionsJson)
+	if err := s.ChildRepo.Save(child); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *ChildService) RebindChild(childCode, parentFirebaseUID string) (models.Child, error) {

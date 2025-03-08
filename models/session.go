@@ -1,7 +1,9 @@
 package models
 
+import "time"
+
 type Session struct {
-	App       string  `json:"app"`
-	Duration  float64 `json:"duration"`
-	Timestamp string  `json:"timestamp"`
+	App       string    `json:"app"`
+	Duration  int       `json:"duration"`
+	Timestamp time.Time `json:"timestamp"`
 }

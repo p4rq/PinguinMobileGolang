@@ -13,7 +13,8 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/register/child", controllers.RegisterChild)
 	r.POST("/login/parent", controllers.LoginParent)
 	r.POST("/auth/token-verify", controllers.TokenVerify)
-
+	r.POST("/block/apps", controllers.BlockApps)
+	r.POST("/unblock/apps", controllers.UnblockApps)
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())
