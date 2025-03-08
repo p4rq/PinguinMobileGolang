@@ -26,6 +26,11 @@ func RegisterParent(c *gin.Context) {
 		return
 	}
 
+	if input.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password cannot be empty"})
+		return
+	}
+
 	parent, token, err := authService.RegisterParent(input.Lang, input.Name, input.Email, input.Password)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

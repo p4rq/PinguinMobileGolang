@@ -36,6 +36,10 @@ func NewAuthService(parentRepo repositories.ParentRepository, childRepo reposito
 }
 
 func (s *AuthService) RegisterParent(lang, name, email, password string) (models.Parent, string, error) {
+	if password == "" {
+		return models.Parent{}, "", errors.New("password cannot be empty")
+	}
+
 	// Register user in Firebase
 	params := (&auth.UserToCreate{}).
 		Email(email).
@@ -60,8 +64,11 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 	}
 
 	// Create user in local database
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	fmt.Printf("Hashed password: %s\n", hashedPassword) // Отладочное сообщение
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return models.Parent{}, "", err
+	}
+	fmt.Printf("Hashed password: %s\n", hashedPassword) // Debugging message
 	parent := models.Parent{
 		Lang:        lang,
 		Name:        name,

@@ -5,7 +5,6 @@ import (
 	"PinguinMobile/repositories"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -64,14 +63,16 @@ func (s *ParentService) UpdateChild(child models.Child) error {
 func (s *ParentService) UnbindChild(parentFirebaseUID, childFirebaseUID string) error {
 	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
 	if err != nil {
-		return err
+		return errors.New("parent not found")
 	}
 
 	var family []map[string]interface{}
-	json.Unmarshal([]byte(parent.Family), &family)
+	if err := json.Unmarshal([]byte(parent.Family), &family); err != nil {
+		return errors.New("failed to parse family JSON")
+	}
+
 	childIndex := -1
 	for i, member := range family {
-		fmt.Printf("Checking member: %v\n", member) // Отладочное сообщение
 		if member["firebase_uid"] == childFirebaseUID {
 			childIndex = i
 			break
@@ -81,16 +82,23 @@ func (s *ParentService) UnbindChild(parentFirebaseUID, childFirebaseUID string) 
 		return errors.New("child not found in parent's family")
 	}
 
+	// Remove the child from the family array
 	family = append(family[:childIndex], family[childIndex+1:]...)
-	familyJson, _ := json.Marshal(family)
+	familyJson, err := json.Marshal(family)
+	if err != nil {
+		return errors.New("failed to marshal family JSON")
+	}
 	parent.Family = string(familyJson)
+
+	// Update the parent in the database
 	if err := s.ParentRepo.Save(parent); err != nil {
 		return err
 	}
 
+	// Update the child in the database
 	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
 	if err != nil {
-		return err
+		return errors.New("child not found")
 	}
 	child.IsBinded = false
 	child.Family = "[]"

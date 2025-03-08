@@ -87,48 +87,19 @@ func UnbindChild(c *gin.Context) {
 		return
 	}
 
+	err := parentService.UnbindChild(request.ParentFirebaseUID, request.ChildFirebaseUID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	parent, err := parentService.ReadParent(request.ParentFirebaseUID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Parent not found"})
 		return
 	}
 
-	var family []map[string]interface{}
-	json.Unmarshal([]byte(parent.Family), &family)
-	childIndex := -1
-	for i, member := range family {
-		if member["firebase_uid"] == request.ChildFirebaseUID {
-			childIndex = i
-			break
-		}
-	}
-	if childIndex == -1 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Child not found in parent's family"})
-		return
-	}
-
-	family = append(family[:childIndex], family[childIndex+1:]...)
-	familyJson, _ := json.Marshal(family)
-	parent.Family = string(familyJson)
-	updatedParent, err := parentService.UpdateParent(request.ParentFirebaseUID, parent)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	child, err := parentService.ReadChild(request.ChildFirebaseUID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Child not found"})
-		return
-	}
-	child.IsBinded = false
-	child.Family = "[]"
-	if err := parentService.UpdateChild(child); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Child unbound successfully", "parent": updatedParent})
+	c.JSON(http.StatusOK, gin.H{"message": "Child unbound successfully", "parent": parent})
 }
 
 func MonitorChildrenUsage(c *gin.Context) {
