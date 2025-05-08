@@ -204,16 +204,21 @@ func (s *ParentService) UnblockApps(parentFirebaseUID, childFirebaseUID string, 
 		json.Unmarshal([]byte(child.BlockedApps), &blockedApps)
 	}
 
+	// Создаем карту для быстрого поиска
+	appsToUnblock := make(map[string]bool)
 	for _, app := range apps {
-		for i, blockedApp := range blockedApps {
-			if blockedApp == app {
-				blockedApps = append(blockedApps[:i], blockedApps[i+1:]...)
-				break
-			}
+		appsToUnblock[app] = true
+	}
+
+	// Формируем новый список, исключая разблокированные
+	newBlockedApps := []string{}
+	for _, app := range blockedApps {
+		if !appsToUnblock[app] {
+			newBlockedApps = append(newBlockedApps, app)
 		}
 	}
 
-	blockedAppsJson, err := json.Marshal(blockedApps)
+	blockedAppsJson, err := json.Marshal(newBlockedApps)
 	if err != nil {
 		return errors.New("failed to marshal blocked apps JSON")
 	}

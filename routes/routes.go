@@ -13,8 +13,8 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/register/child", controllers.RegisterChild)
 	r.POST("/login/parent", controllers.LoginParent)
 	r.POST("/auth/token-verify", controllers.TokenVerify)
-	r.POST("/block/apps", controllers.BlockApps)
-	r.POST("/unblock/apps", controllers.UnblockApps)
+	r.GET("/ws", middlewares.AuthMiddleware(), controllers.ServeWs)
+
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())
@@ -22,6 +22,8 @@ func RegisterRoutes(r *gin.Engine) {
 		parents.GET("/:firebase_uid", controllers.ReadParent)
 		parents.PUT("/:firebase_uid", controllers.UpdateParent)
 		parents.DELETE("/:firebase_uid", controllers.DeleteParent)
+		parents.POST("/block/apps", controllers.BlockApps)
+		parents.POST("/unblock/apps", controllers.UnblockApps)
 	}
 
 	// Separate route group for unbind and monitor routes to avoid conflicts
@@ -49,5 +51,16 @@ func RegisterRoutes(r *gin.Engine) {
 		children.POST("/:firebase_uid/logout", controllers.LogoutChild)
 		children.POST("/:firebase_uid/monitor", controllers.MonitorChild)
 		children.POST("/rebind", controllers.RebindChild)
+	}
+
+	// Chat routes
+	chat := r.Group("/chat")
+	chat.Use(middlewares.AuthMiddleware())
+	{
+		chat.POST("/messages", controllers.SendMessage)
+		chat.GET("/family/:parent_id/messages", controllers.GetFamilyMessages)
+		chat.PUT("/messages/read", controllers.MarkAsRead)
+		chat.DELETE("/messages/:message_id", controllers.DeleteMessage)
+		chat.GET("/family/:parent_id/unread", controllers.GetUnreadCount)
 	}
 }
