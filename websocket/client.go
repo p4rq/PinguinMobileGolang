@@ -1,73 +1,67 @@
 package websocket
 
 import (
-	"encoding/json"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	// Time allowed to write a message to the peer.
+	// Время ожидания для записи сообщения клиенту
 	writeWait = 10 * time.Second
 
-	// Time allowed to read the next pong message from the peer.
+	// Время ожидания для чтения следующего pong от клиента
 	pongWait = 60 * time.Second
 
-	// Send pings to peer with this period. Must be less than pongWait.
+	// Период отправки ping-сообщений клиенту
 	pingPeriod = (pongWait * 9) / 10
 
-	// Maximum message size allowed from peer.
-	maxMessageSize = 512
+	// Максимальный размер сообщения, разрешенного от клиента
+	maxMessageSize = 10240
 )
 
-var (
-	newline = []byte{'\n'}
-	space   = []byte{' '}
-)
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	// Разрешаем все origins для упрощения разработки
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
 
-// Client is a middleman between the websocket connection and the hub.
+// Client представляет собой соединение WebSocket
 type Client struct {
-	Hub *Hub
+	hub *Hub
 
-	// User ID for this connection
-	UserID string
+	// WebSocket соединение
+	conn *websocket.Conn
 
-	// Parent ID for routing messages
-	ParentID string
+	// Буферизованный канал для исходящих сообщений
+	send chan WebSocketMessage
 
-	// The websocket connection.
-	Conn *websocket.Conn
-
-	// Buffered channel of outbound messages.
-	send chan []byte
+	// Идентификаторы для маршрутизации сообщений
+	userID   string
+	parentID string
+	userType string
 }
 
-// NewClient создает нового клиента WebSocket
-func NewClient(hub *Hub, userID string, parentID string, conn *websocket.Conn) *Client {
-	return &Client{
-		Hub:      hub,
-		UserID:   userID,
-		ParentID: parentID,
-		Conn:     conn,
-		send:     make(chan []byte, 256),
-	}
-}
-
-// ReadPump pumps messages from the websocket connection to the hub.
-func (c *Client) ReadPump() {
+// readPump обрабатывает входящие сообщения от клиента
+func (c *Client) readPump() {
 	defer func() {
-		c.Hub.Unregister(c)
-		c.Conn.Close()
+		c.hub.unregister <- c
+		c.conn.Close()
 	}()
 
-	c.Conn.SetReadLimit(maxMessageSize)
-	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 
 	for {
-		_, messageData, err := c.Conn.ReadMessage()
+		var message WebSocketMessage
+		err := c.conn.ReadJSON(&message)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
@@ -75,123 +69,68 @@ func (c *Client) ReadPump() {
 			break
 		}
 
-		// Разбор JSON сообщения
-		var msg map[string]interface{}
-		if err := json.Unmarshal(messageData, &msg); err != nil {
-			log.Printf("error parsing message: %v", err)
-			continue
-		}
+		// Обогащаем сообщение данными отправителя
+		message.SenderID = c.userID
+		message.SenderType = c.userType
+		message.ParentID = c.parentID
 
-		msgType, ok := msg["type"].(string)
-		if !ok {
-			log.Printf("message type not specified")
-			continue
-		}
+		c.hub.broadcast <- message
+	}
+}
 
-		// Обработка разных типов сообщений
-		switch msgType {
-		case "chat":
-			// Обработка сообщения чата
-			parentID, ok := msg["parent_id"].(string)
+// writePump отправляет сообщения клиенту
+func (c *Client) writePump() {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				log.Printf("parent_id not specified in chat message")
-				continue
+				// Hub закрыл канал
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
 			}
 
-			messageText, _ := msg["message"].(string)
-			channel, _ := msg["channel"].(string)
-			isPrivate, _ := msg["is_private"].(bool)
-			recipientID, _ := msg["recipient_id"].(string)
-
-			// Определяем, куда отправлять сообщение
-			targetID := parentID
-			if isPrivate && recipientID != "" {
-				// Для приватных сообщений отправляем только конкретным пользователям
-				// Используем специальное форматирование ID для личных чатов
-				targetID = "private_" + parentID + "_" + recipientID
-			}
-
-			// Создаем сообщение для широковещательной рассылки
-			chatMsg := struct {
-				Type        string `json:"type"`
-				SenderID    string `json:"sender_id"`
-				SenderName  string `json:"sender_name"`
-				ParentID    string `json:"parent_id"`
-				RecipientID string `json:"recipient_id,omitempty"`
-				IsPrivate   bool   `json:"is_private"`
-				Channel     string `json:"channel,omitempty"`
-				Message     string `json:"message"`
-				Timestamp   int64  `json:"timestamp"`
-			}{
-				Type:        "chat",
-				SenderID:    c.UserID,
-				SenderName:  "User", // Здесь нужно добавить получение имени пользователя
-				ParentID:    parentID,
-				RecipientID: recipientID,
-				IsPrivate:   isPrivate,
-				Channel:     channel,
-				Message:     messageText,
-				Timestamp:   time.Now().Unix(),
-			}
-
-			// Преобразуем обратно в JSON и отправляем
-			broadcastMsg, err := json.Marshal(chatMsg)
+			err := c.conn.WriteJSON(message)
 			if err != nil {
-				log.Printf("error marshaling broadcast message: %v", err)
-				continue
+				log.Printf("Error writing message: %v", err)
+				return
 			}
 
-			c.Hub.Broadcast(&Message{ParentID: targetID, Data: broadcastMsg})
-
-		case "auth":
-			// Аутентификация может быть выполнена здесь,
-			// но уже должна быть обработана middleware
-			log.Printf("auth message received from %s", c.UserID)
-
-		default:
-			log.Printf("unknown message type: %s", msgType)
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
 
-// WritePump pumps messages from the hub to the websocket connection.
-func (c *Client) WritePump() {
-	ticker := time.NewTicker(pingPeriod)
-	defer func() {
-		ticker.Stop()
-		c.Conn.Close()
-	}()
-	for {
-		select {
-		case message, ok := <-c.send:
-			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if !ok {
-				// The hub closed the channel.
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-
-			w, err := c.Conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
-
-			// Add queued chat messages to the current websocket message.
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write(newline)
-				w.Write(<-c.send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
-			}
-		case <-ticker.C:
-			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
-		}
+// ServeWs обрабатывает WebSocket запрос от клиента
+func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID, parentID, userType string) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
 	}
+
+	client := &Client{
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan WebSocketMessage, 256),
+		userID:   userID,
+		parentID: parentID,
+		userType: userType,
+	}
+
+	client.hub.register <- client
+
+	// Разрешаем коллекции горутин на сохранение буфера после того, как функция вернется
+	go client.writePump()
+	go client.readPump()
 }

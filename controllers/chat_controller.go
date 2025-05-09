@@ -45,6 +45,7 @@ func SendTextMessage(c *gin.Context) {
 	userType, _ := c.Get("user_type")
 	isParent := userType == "parent"
 
+	// Отправляем сообщение через обычный API
 	message, err := chatService.SendMessage(
 		userID.(string),
 		input.ParentID,
@@ -57,6 +58,11 @@ func SendTextMessage(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Отправляем уведомление через WebSocket
+	if WebSocketHub != nil {
+		WebSocketHub.BroadcastChatMessage(message)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": message})
@@ -120,6 +126,11 @@ func SendMediaMessage(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// После успешной отправки медиа-сообщения
+	if WebSocketHub != nil {
+		WebSocketHub.BroadcastChatMessage(chatMessage)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": chatMessage})

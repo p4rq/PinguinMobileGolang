@@ -7,6 +7,7 @@ import (
 	"PinguinMobile/repositories/impl"
 	"PinguinMobile/routes"
 	"PinguinMobile/services"
+	"PinguinMobile/websocket"
 	"log"
 	"os"
 
@@ -44,7 +45,12 @@ func main() {
 	controllers.SetChildService(childService)
 	controllers.SetParentService(parentService)
 	controllers.SetChatService(chatService)
-	controllers.InitWebsocket(chatService)
+	// controllers.InitWebsocket(chatService)
+
+	// Инициализация WebSocket Hub
+	webSocketHub := websocket.NewHub()
+	controllers.SetWebSocketHub(webSocketHub)
+
 	// Initialize Gin router
 	r := gin.Default()
 

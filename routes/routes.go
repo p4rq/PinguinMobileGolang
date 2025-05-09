@@ -13,6 +13,7 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/register/child", controllers.RegisterChild)
 	r.POST("/login/parent", controllers.LoginParent)
 	r.POST("/auth/token-verify", controllers.TokenVerify)
+	// Маршрут WebSocket (проверьте, что он есть)
 	r.GET("/ws", middlewares.AuthMiddleware(), controllers.ServeWs)
 
 	// Protected routes
