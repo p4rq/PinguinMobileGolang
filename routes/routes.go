@@ -57,10 +57,15 @@ func RegisterRoutes(r *gin.Engine) {
 	chat := r.Group("/chat")
 	chat.Use(middlewares.AuthMiddleware())
 	{
-		chat.POST("/messages", controllers.SendMessage)
+		chat.POST("/messages/text", controllers.SendTextMessage)
+		chat.POST("/messages/media", controllers.SendMediaMessage)
 		chat.GET("/family/:parent_id/messages", controllers.GetFamilyMessages)
+		chat.GET("/private/:parent_id/:user_id", controllers.GetPrivateMessages)
 		chat.PUT("/messages/read", controllers.MarkAsRead)
 		chat.DELETE("/messages/:message_id", controllers.DeleteMessage)
+		chat.POST("/moderation", controllers.ModerateMessage)
 		chat.GET("/family/:parent_id/unread", controllers.GetUnreadCount)
+		chat.GET("/private/:parent_id/unread", controllers.GetUnreadPrivateCount)
+		chat.GET("/family/:parent_id/channels", controllers.GetChannelsList)
 	}
 }

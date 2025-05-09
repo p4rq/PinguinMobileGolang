@@ -42,6 +42,16 @@ func ServeWs(c *gin.Context) {
 		return
 	}
 
+	// Для приватных чатов можно указать recipient_id
+	recipientID := c.Query("recipient_id")
+	isPrivate := recipientID != ""
+
+	// Целевой ID для подключения
+	targetID := parentID
+	if isPrivate {
+		targetID = "private_" + parentID + "_" + recipientID
+	}
+
 	// Проверяем, что пользователь имеет доступ к этой семье
 	userType, _ := c.Get("user_type")
 	isParent := userType == "parent"
@@ -54,11 +64,24 @@ func ServeWs(c *gin.Context) {
 		}
 	} else {
 		// Если ребенок, то проверяем принадлежность к семье
-		// Используем публичный метод из сервиса
-		isChildInFamily, err := isChildBelongsToFamily(wsChatService, userID.(string), parentID)
-		if err != nil || !isChildInFamily {
+		inFamily, err := isChildBelongsToFamily(wsChatService, userID.(string), parentID)
+		if err != nil || !inFamily {
 			c.JSON(http.StatusForbidden, gin.H{"error": "access denied to this family"})
 			return
+		}
+	}
+
+	// Если это приватный чат, проверяем, что второй пользователь тоже в этой семье
+	if isPrivate {
+		if recipientID == parentID {
+			// Родитель всегда в семье, все ок
+		} else {
+			// Проверяем, что указанный получатель в этой семье
+			inFamily, err := isChildBelongsToFamily(wsChatService, recipientID, parentID)
+			if err != nil || !inFamily {
+				c.JSON(http.StatusForbidden, gin.H{"error": "recipient not in this family"})
+				return
+			}
 		}
 	}
 
@@ -69,12 +92,12 @@ func ServeWs(c *gin.Context) {
 	}
 
 	// Создаем клиента используя публичный конструктор
-	client := ws.NewClient(hub, userID.(string), parentID, conn)
+	client := ws.NewClient(hub, userID.(string), targetID, conn)
 
-	// Регистрируем клиента (используем публичный метод)
+	// Регистрируем клиента
 	hub.Register(client)
 
-	// Запускаем горутины для обработки сообщений (используем публичные методы)
+	// Запускаем горутины для обработки сообщений
 	go client.WritePump()
 	go client.ReadPump()
 }

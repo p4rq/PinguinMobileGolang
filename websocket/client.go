@@ -1,7 +1,7 @@
 package websocket
 
 import (
-	"bytes"
+	"encoding/json"
 	"log"
 	"time"
 
@@ -58,22 +58,99 @@ func NewClient(hub *Hub, userID string, parentID string, conn *websocket.Conn) *
 // ReadPump pumps messages from the websocket connection to the hub.
 func (c *Client) ReadPump() {
 	defer func() {
-		c.Hub.unregister <- c
+		c.Hub.Unregister(c)
 		c.Conn.Close()
 	}()
+
 	c.Conn.SetReadLimit(maxMessageSize)
 	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+
 	for {
-		_, message, err := c.Conn.ReadMessage()
+		_, messageData, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
 			break
 		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.Hub.broadcast <- &Message{ParentID: c.ParentID, Data: message}
+
+		// Разбор JSON сообщения
+		var msg map[string]interface{}
+		if err := json.Unmarshal(messageData, &msg); err != nil {
+			log.Printf("error parsing message: %v", err)
+			continue
+		}
+
+		msgType, ok := msg["type"].(string)
+		if !ok {
+			log.Printf("message type not specified")
+			continue
+		}
+
+		// Обработка разных типов сообщений
+		switch msgType {
+		case "chat":
+			// Обработка сообщения чата
+			parentID, ok := msg["parent_id"].(string)
+			if !ok {
+				log.Printf("parent_id not specified in chat message")
+				continue
+			}
+
+			messageText, _ := msg["message"].(string)
+			channel, _ := msg["channel"].(string)
+			isPrivate, _ := msg["is_private"].(bool)
+			recipientID, _ := msg["recipient_id"].(string)
+
+			// Определяем, куда отправлять сообщение
+			targetID := parentID
+			if isPrivate && recipientID != "" {
+				// Для приватных сообщений отправляем только конкретным пользователям
+				// Используем специальное форматирование ID для личных чатов
+				targetID = "private_" + parentID + "_" + recipientID
+			}
+
+			// Создаем сообщение для широковещательной рассылки
+			chatMsg := struct {
+				Type        string `json:"type"`
+				SenderID    string `json:"sender_id"`
+				SenderName  string `json:"sender_name"`
+				ParentID    string `json:"parent_id"`
+				RecipientID string `json:"recipient_id,omitempty"`
+				IsPrivate   bool   `json:"is_private"`
+				Channel     string `json:"channel,omitempty"`
+				Message     string `json:"message"`
+				Timestamp   int64  `json:"timestamp"`
+			}{
+				Type:        "chat",
+				SenderID:    c.UserID,
+				SenderName:  "User", // Здесь нужно добавить получение имени пользователя
+				ParentID:    parentID,
+				RecipientID: recipientID,
+				IsPrivate:   isPrivate,
+				Channel:     channel,
+				Message:     messageText,
+				Timestamp:   time.Now().Unix(),
+			}
+
+			// Преобразуем обратно в JSON и отправляем
+			broadcastMsg, err := json.Marshal(chatMsg)
+			if err != nil {
+				log.Printf("error marshaling broadcast message: %v", err)
+				continue
+			}
+
+			c.Hub.Broadcast(&Message{ParentID: targetID, Data: broadcastMsg})
+
+		case "auth":
+			// Аутентификация может быть выполнена здесь,
+			// но уже должна быть обработана middleware
+			log.Printf("auth message received from %s", c.UserID)
+
+		default:
+			log.Printf("unknown message type: %s", msgType)
+		}
 	}
 }
 

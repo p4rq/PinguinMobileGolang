@@ -20,7 +20,9 @@ import (
 var jwtKey = []byte("your_secret_key")
 
 type Claims struct {
-	Email string `json:"email"`
+	Email       string `json:"email"`
+	FirebaseUID string `json:"firebase_uid"`
+	UserType    string `json:"user_type"`
 	jwt.StandardClaims
 }
 
@@ -84,10 +86,12 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		return models.Parent{}, "", err
 	}
 
-	// Generate JWT token
+	// Generate JWT token with additional fields
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
-		Email: email,
+		Email:       email,
+		FirebaseUID: firebaseUid, // Добавляем FirebaseUID в токен
+		UserType:    "parent",    // Указываем тип пользователя
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 		},
@@ -108,22 +112,24 @@ func (s *AuthService) LoginParent(email, password string) (models.Parent, string
 		return models.Parent{}, "", err
 	}
 
-	fmt.Printf("Stored hashed password: %s\n", parent.Password) // Отладочное сообщение
-	fmt.Printf("Provided password: %s\n", password)             // Отладочное сообщение
+	fmt.Printf("Stored hashed password: %s\n", parent.Password)
+	fmt.Printf("Provided password: %s\n", password)
 
 	// Проверка длины пароля
-	fmt.Printf("Length of provided password: %d\n", len(password))             // Отладочное сообщение
-	fmt.Printf("Length of stored hashed password: %d\n", len(parent.Password)) // Отладочное сообщение
+	fmt.Printf("Length of provided password: %d\n", len(password))
+	fmt.Printf("Length of stored hashed password: %d\n", len(parent.Password))
 
 	if err := bcrypt.CompareHashAndPassword([]byte(parent.Password), []byte(password)); err != nil {
-		fmt.Printf("Password comparison error: %v\n", err) // Отладочное сообщение
+		fmt.Printf("Password comparison error: %v\n", err)
 		return models.Parent{}, "", err
 	}
 
-	// Generate JWT token
+	// Generate JWT token with additional fields
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
-		Email: email,
+		Email:       email,
+		FirebaseUID: parent.FirebaseUID, // Добавляем FirebaseUID в токен
+		UserType:    "parent",           // Указываем тип пользователя
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 		},
@@ -218,10 +224,12 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	parent.Code = newCode
 	s.ParentRepo.Save(parent)
 
-	// Generate JWT token
+	// Generate JWT token with additional fields
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
-		Email: child.FirebaseUID,
+		Email:       child.FirebaseUID, // В случае с ребенком email может не быть, используем FirebaseUID
+		FirebaseUID: firebaseUid,       // Добавляем FirebaseUID в токен
+		UserType:    "child",           // Указываем тип пользователя - "child"
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 		},
