@@ -150,9 +150,12 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 		return models.Child{}, "", err
 	}
 
-	// Register user in Firebase
-	params := (&auth.UserToCreate{}).
-		DisplayName(name)
+	// Register user in Firebase без имени (автоматическое имя)
+	params := (&auth.UserToCreate{})
+	// Устанавливаем DisplayName только если name не пустой
+	if name != "" {
+		params = params.DisplayName(name)
+	}
 
 	createdUser, err := s.FirebaseAuth.CreateUser(context.Background(), params)
 	if err != nil {
@@ -182,11 +185,12 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 
 	child := models.Child{
 		Lang:        lang,
-		Name:        name,
+		Name:        "", // Устанавливаем пустое имя
 		Family:      string(familyJSON),
 		FirebaseUID: firebaseUid,
 		IsBinded:    true,
 		Code:        childCode,
+		Role:        "child",
 	}
 
 	if err := s.ChildRepo.Save(child); err != nil {

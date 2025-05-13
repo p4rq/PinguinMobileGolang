@@ -64,7 +64,6 @@ func RegisterChild(c *gin.Context) {
 	var input struct {
 		Lang string `json:"lang" binding:"required"`
 		Code string `json:"code" binding:"required"`
-		Name string `json:"name"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -72,7 +71,8 @@ func RegisterChild(c *gin.Context) {
 		return
 	}
 
-	child, token, err := authService.RegisterChild(input.Lang, input.Code, input.Name)
+	// Передаем пустую строку в качестве имени
+	child, token, err := authService.RegisterChild(input.Lang, input.Code, "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
