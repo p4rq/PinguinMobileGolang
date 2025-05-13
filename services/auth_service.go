@@ -244,6 +244,44 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	return child, tokenString, nil
 }
 
+// LoginChild authenticates a child using their code and returns a JWT token
+func (s *AuthService) LoginChild(code string) (models.Child, string, error) {
+	child, err := s.ChildRepo.FindByCode(code)
+	if err != nil {
+		return models.Child{}, "", errors.New("invalid code")
+	}
+
+	// Generate JWT token with additional fields
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		Email:       child.FirebaseUID, // Child doesn't have email, use FirebaseUID
+		FirebaseUID: child.FirebaseUID,
+		UserType:    "child",
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expirationTime.Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtKey)
+	if err != nil {
+		return models.Child{}, "", err
+	}
+
+	// Check if child is already bound to a parent
+	if child.IsBinded {
+		// Update the child's status if needed
+		if !child.IsBinded {
+			child.IsBinded = true
+			if err := s.ChildRepo.Save(child); err != nil {
+				return models.Child{}, "", err
+			}
+		}
+	}
+
+	return child, tokenString, nil
+}
+
 func (s *AuthService) VerifyToken(uid string) (interface{}, error) {
 	var parent models.Parent
 	var child models.Child

@@ -99,3 +99,23 @@ func TokenVerify(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": true, "user": user})
 }
+
+// LoginChild logs in a child using their code
+func LoginChild(c *gin.Context) {
+	var input struct {
+		Code string `json:"code" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	child, token, err := authService.LoginChild(input.Code)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": child})
+}

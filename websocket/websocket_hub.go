@@ -116,3 +116,57 @@ func (h *Hub) BroadcastSystemMessage(parentID string, messageType string, conten
 
 	h.broadcast <- payload
 }
+
+// BroadcastDeviceUsage отправляет информацию об использовании устройства ребенка родителю
+func (h *Hub) BroadcastDeviceUsage(parentID string, usageData map[string]interface{}) {
+	message := WebSocketMessage{
+		Type:     "device_usage",
+		ParentID: parentID,
+		Message:  usageData,
+	}
+	h.broadcast <- message
+}
+
+// BroadcastAppActivity отправляет информацию о текущем активном приложении
+func (h *Hub) BroadcastAppActivity(parentID string, childID string, appData map[string]interface{}) {
+	message := WebSocketMessage{
+		Type:     "app_activity",
+		ParentID: parentID,
+		Message:  appData,
+		SenderID: childID,
+	}
+	h.broadcast <- message
+}
+
+// BroadcastScreenTimeAlert отправляет уведомление о превышении лимита экранного времени
+func (h *Hub) BroadcastScreenTimeAlert(parentID string, childID string, alertData map[string]interface{}) {
+	message := WebSocketMessage{
+		Type:     "screen_time_alert",
+		ParentID: parentID,
+		Message:  alertData,
+		SenderID: childID,
+	}
+	h.broadcast <- message
+}
+
+// BroadcastBlockedContentAttempt отправляет уведомление о попытке доступа к запрещенному контенту
+func (h *Hub) BroadcastBlockedContentAttempt(parentID string, childID string, contentData map[string]interface{}) {
+	message := WebSocketMessage{
+		Type:     "blocked_content_attempt",
+		ParentID: parentID,
+		Message:  contentData,
+		SenderID: childID,
+	}
+	h.broadcast <- message
+}
+
+// BroadcastScreenTimeLimit отправляет информацию о новых настройках лимита экранного времени
+func (h *Hub) BroadcastScreenTimeLimit(childID string, parentID string, limitData map[string]interface{}) {
+	message := WebSocketMessage{
+		Type:     "screen_time_limit_update",
+		ParentID: parentID,
+		Message:  limitData,
+		SenderID: childID,
+	}
+	h.broadcast <- message
+}
