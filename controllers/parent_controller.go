@@ -210,3 +210,66 @@ func UnblockApps(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Apps unblocked successfully"})
 }
+
+// BlockAppsTempOnce обрабатывает запрос на одноразовую временную блокировку приложений
+func BlockAppsTempOnce(c *gin.Context) {
+	var request services.TempBlockRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	parentFirebaseUID := c.Param("firebase_uid")
+
+	blocks, err := parentService.BlockAppsTempOnce(parentFirebaseUID, request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Приложения временно заблокированы",
+		"blocks":  blocks,
+	})
+}
+
+// GetOneTimeBlocks возвращает список одноразовых блокировок для ребенка
+func GetOneTimeBlocks(c *gin.Context) {
+	parentFirebaseUID := c.Param("firebase_uid")
+	childFirebaseUID := c.Param("child_id")
+
+	blocks, err := parentService.GetOneTimeBlocks(parentFirebaseUID, childFirebaseUID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"blocks": blocks,
+	})
+}
+
+// CancelOneTimeBlocks отменяет одноразовые блокировки для указанных приложений
+func CancelOneTimeBlocks(c *gin.Context) {
+	var appPackages []string
+	if err := c.ShouldBindJSON(&appPackages); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	parentFirebaseUID := c.Param("firebase_uid")
+	childFirebaseUID := c.Param("child_id")
+
+	err := parentService.CancelOneTimeBlocks(parentFirebaseUID, childFirebaseUID, appPackages)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Временные блокировки успешно отменены",
+	})
+}

@@ -5,6 +5,7 @@ import (
 	"PinguinMobile/repositories"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -350,4 +351,161 @@ func (s *ParentService) isChildInFamily(parent models.Parent, childFirebaseUID s
 	}
 
 	return false
+}
+
+// Добавьте структуру запроса для одноразовой блокировки
+type TempBlockRequest struct {
+	ChildFirebaseUID string   `json:"child_firebase_uid" binding:"required"`
+	AppPackages      []string `json:"app_packages" binding:"required"`
+	DurationHours    float64  `json:"duration_hours" binding:"required,min=0.5,max=24"`
+}
+
+// BlockAppsTempOnce блокирует приложения одноразово на указанное количество часов
+func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request TempBlockRequest) ([]models.AppTimeBlock, error) {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return nil, errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(request.ChildFirebaseUID)
+	if err != nil {
+		return nil, errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, request.ChildFirebaseUID) {
+		return nil, errors.New("child does not belong to this parent")
+	}
+
+	// Вычисляем время окончания блокировки
+	endTime := time.Now().Add(time.Duration(request.DurationHours * float64(time.Hour)))
+
+	// Создаем блоки для одноразовой блокировки
+	var blocks []models.AppTimeBlock
+	for _, appPackage := range request.AppPackages {
+		block := models.AppTimeBlock{
+			AppPackage:   appPackage,
+			StartTime:    "00:00",                               // Начало дня
+			EndTime:      "23:59",                               // Конец дня
+			DaysOfWeek:   "1,2,3,4,5,6,7",                       // Все дни недели
+			IsOneTime:    true,                                  // Флаг одноразовой блокировки
+			OneTimeEndAt: endTime,                               // Время окончания блокировки
+			Duration:     formatDuration(request.DurationHours), // Длительность в читаемом формате
+		}
+		blocks = append(blocks, block)
+	}
+
+	// Сохраняем блокировки через репозиторий ребенка
+	if err := s.ChildRepo.AddTimeBlockedApps(child.ID, blocks); err != nil {
+		return nil, err
+	}
+
+	// Возвращаем созданные блокировки
+	return blocks, nil
+}
+
+// GetOneTimeBlocks возвращает список активных одноразовых блокировок для ребенка
+func (s *ParentService) GetOneTimeBlocks(parentFirebaseUID, childFirebaseUID string) ([]models.AppTimeBlock, error) {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return nil, errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return nil, errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, childFirebaseUID) {
+		return nil, errors.New("child does not belong to this parent")
+	}
+
+	// Получаем все временные блокировки
+	allBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Фильтруем только одноразовые блокировки, которые еще активны
+	var oneTimeBlocks []models.AppTimeBlock
+	now := time.Now()
+	for _, block := range allBlocks {
+		if block.IsOneTime && block.OneTimeEndAt.After(now) {
+			oneTimeBlocks = append(oneTimeBlocks, block)
+		}
+	}
+
+	return oneTimeBlocks, nil
+}
+
+// CancelOneTimeBlocks отменяет одноразовые блокировки для указанных приложений
+func (s *ParentService) CancelOneTimeBlocks(parentFirebaseUID, childFirebaseUID string, appPackages []string) error {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, childFirebaseUID) {
+		return errors.New("child does not belong to this parent")
+	}
+
+	// Получаем все временные блокировки
+	allBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	if err != nil {
+		return err
+	}
+
+	// Создаем карту приложений для отмены блокировки
+	appsToCancel := make(map[string]bool)
+	for _, app := range appPackages {
+		appsToCancel[app] = true
+	}
+
+	// Фильтруем блокировки, удаляя одноразовые для указанных приложений
+	var updatedBlocks []models.AppTimeBlock
+	for _, block := range allBlocks {
+		// Оставляем блок, если это не одноразовая блокировка или приложение не в списке для отмены
+		if !block.IsOneTime || !appsToCancel[block.AppPackage] {
+			updatedBlocks = append(updatedBlocks, block)
+		}
+	}
+
+	// Удаляем все блокировки и добавляем обновленные
+	if err := s.ChildRepo.RemoveAllTimeBlockedApps(child.ID); err != nil {
+		return err
+	}
+
+	if len(updatedBlocks) > 0 {
+		if err := s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// formatDuration форматирует продолжительность в часах в человекочитаемый формат
+func formatDuration(hours float64) string {
+	if hours < 1 {
+		return fmt.Sprintf("%.0f минут", hours*60)
+	} else if hours == 1 {
+		return "1 час"
+	} else if hours < 5 {
+		return fmt.Sprintf("%.1f часа", hours)
+	} else {
+		return fmt.Sprintf("%.1f часов", hours)
+	}
 }

@@ -353,3 +353,55 @@ func isTimeInRange(current, start, end string) bool {
 	// Обычный случай: проверка, что текущее время между началом и концом
 	return !currentTime.Before(startTime) && !currentTime.After(endTime)
 }
+
+// IsAppBlocked проверяет, заблокировано ли приложение (включая одноразовые блокировки)
+func (s *ChildService) IsAppBlocked(childFirebaseUID, appPackage string) (bool, string, error) {
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Получаем все временные блокировки
+	blocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Текущее время
+	now := time.Now()
+	currentDay := int(now.Weekday())
+	if currentDay == 0 {
+		currentDay = 7 // Воскресенье = 7 вместо 0
+	}
+	currentTime := now.Format("15:04")
+
+	// Сначала проверяем одноразовые блокировки
+	for _, block := range blocks {
+		if block.AppPackage == appPackage && block.IsOneTime && block.OneTimeEndAt.After(now) {
+			// Найдена активная одноразовая блокировка
+			return true, "one_time", nil
+		}
+	}
+
+	// Затем проверяем регулярные блокировки по расписанию
+	for _, block := range blocks {
+		if block.AppPackage == appPackage && !block.IsOneTime {
+			// Проверяем, действует ли блокировка в текущий день
+			daysOfWeek := strings.Split(block.DaysOfWeek, ",")
+			for _, day := range daysOfWeek {
+				dayNum, _ := strconv.Atoi(day)
+				if dayNum == currentDay {
+					// Проверяем, действует ли блокировка в текущее время
+					if (block.StartTime <= currentTime && block.EndTime >= currentTime) ||
+						(block.StartTime > block.EndTime && (currentTime >= block.StartTime || currentTime <= block.EndTime)) {
+						return true, "scheduled", nil
+					}
+				}
+			}
+		}
+	}
+
+	// Приложение не заблокировано
+	return false, "", nil
+}

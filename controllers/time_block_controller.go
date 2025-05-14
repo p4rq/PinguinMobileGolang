@@ -3,6 +3,7 @@ package controllers
 import (
 	"PinguinMobile/models"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -116,29 +117,57 @@ func GetTimeBlockedApps(c *gin.Context) {
 
 // CheckAppBlocking проверяет, заблокировано ли приложение
 func CheckAppBlocking(c *gin.Context) {
-	// Получаем FirebaseUID ребенка из контекста
-	childID, exists := c.Get("firebase_uid")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	// Получаем ID ребенка из параметра запроса
+	childID := c.Query("child_id")
+	if childID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "child_id is required"})
 		return
 	}
 
 	// Получаем пакет приложения из запроса
-	appPackage := c.Query("package")
+	appPackage := c.Query("app_package") // Изменил с "package" на "app_package"
 	if appPackage == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "app package is required"})
-		return
+		// Проверяем альтернативное имя параметра
+		appPackage = c.Query("package")
+		if appPackage == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "app_package is required"})
+			return
+		}
 	}
 
 	// Проверяем блокировку
-	isBlocked, reason, err := childService.CheckAppBlocking(childID.(string), appPackage)
+	isBlocked, blockType, err := childService.CheckAppBlocking(childID, appPackage)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	// Базовый ответ
+	response := gin.H{
 		"blocked": isBlocked,
-		"reason":  reason,
-	})
+		"type":    blockType,
+	}
+
+	// Если это одноразовая блокировка, добавляем дополнительную информацию
+	if isBlocked && blockType == "one_time" {
+		// Получаем ребенка
+		child, err := childService.ReadChild(childID)
+		if err == nil {
+			// Получаем временные блокировки
+			blocks, err := childService.ChildRepo.GetTimeBlockedApps(child.ID)
+			if err == nil {
+				for _, block := range blocks {
+					if block.AppPackage == appPackage && block.IsOneTime {
+						remainingTime := time.Until(block.OneTimeEndAt)
+						response["end_time"] = block.OneTimeEndAt
+						response["remaining_minutes"] = int(remainingTime.Minutes())
+						response["duration"] = block.Duration
+						break
+					}
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }

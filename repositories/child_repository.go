@@ -13,4 +13,5 @@ type ChildRepository interface {
 	AddTimeBlockedApps(childID uint, timeBlocks []models.AppTimeBlock) error
 	RemoveTimeBlockedApps(childID uint, appPackages []string) error
 	GetTimeBlockedApps(childID uint) ([]models.AppTimeBlock, error)
+	RemoveAllTimeBlockedApps(childID uint) error
 }

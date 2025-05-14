@@ -157,3 +157,15 @@ func (r *ChildRepositoryImpl) GetTimeBlockedApps(childID uint) ([]models.AppTime
 
 	return blocks, nil
 }
+
+// RemoveAllTimeBlockedApps удаляет все временные блокировки для ребенка
+func (r *ChildRepositoryImpl) RemoveAllTimeBlockedApps(childID uint) error {
+	var child models.Child
+	if err := r.DB.First(&child, childID).Error; err != nil {
+		return err
+	}
+
+	// Устанавливаем пустой список временных блокировок
+	child.TimeBlockedApps = "[]"
+	return r.DB.Save(&child).Error
+}

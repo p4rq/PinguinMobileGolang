@@ -31,6 +31,11 @@ func RegisterRoutes(r *gin.Engine) {
 		parents.POST("/block/apps/time", controllers.BlockAppsByTime)
 		parents.POST("/unblock/apps/time", controllers.UnblockAppsByTime)
 		parents.GET("/block/apps/time/:firebase_uid", controllers.GetTimeBlockedApps)
+
+		// Маршруты для одноразовой блокировки
+		parents.POST("/:firebase_uid/block-apps-once", controllers.BlockAppsTempOnce)
+		parents.GET("/:firebase_uid/block-apps-once/:child_id", controllers.GetOneTimeBlocks)
+		parents.DELETE("/:firebase_uid/block-apps-once/:child_id", controllers.CancelOneTimeBlocks)
 	}
 
 	// Separate route group for unbind and monitor routes to avoid conflicts
