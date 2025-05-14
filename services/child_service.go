@@ -30,6 +30,7 @@ func (s *ChildService) UpdateChild(firebaseUID string, input models.Child) (mode
 		return models.Child{}, err
 	}
 
+	// Обновляем поля ребенка
 	child.Lang = input.Lang
 	child.Name = input.Name
 	child.Gender = input.Gender
@@ -40,7 +41,7 @@ func (s *ChildService) UpdateChild(firebaseUID string, input models.Child) (mode
 		return models.Child{}, err
 	}
 
-	// Update parent's family JSON
+	// Обновляем информацию в JSON родителя
 	var familyData map[string]interface{}
 	if err := json.Unmarshal([]byte(child.Family), &familyData); err != nil {
 		return models.Child{}, err
@@ -58,10 +59,13 @@ func (s *ChildService) UpdateChild(firebaseUID string, input models.Child) (mode
 			return models.Child{}, err
 		}
 
-		// Check if the child entry exists in the family slice
+		// Проверяем существование записи о ребенке в массиве family
+		// и обновляем ПО FIREBASE_UID, а не по child_id
 		childExists := false
 		for i, member := range family {
-			if uint(member["child_id"].(float64)) == child.ID {
+			memberFirebaseUID, exists := member["firebase_uid"]
+			if exists && memberFirebaseUID == firebaseUID {
+				// Обновляем существующую запись
 				family[i] = map[string]interface{}{
 					"child_id":     child.ID,
 					"name":         child.Name,
@@ -70,14 +74,16 @@ func (s *ChildService) UpdateChild(firebaseUID string, input models.Child) (mode
 					"age":          child.Age,
 					"birthday":     child.Birthday,
 					"firebase_uid": child.FirebaseUID,
-					"isBinded":     true,
+					"isBinded":     child.IsBinded,
+					"usage_data":   child.UsageData,
+					"code":         child.Code,
 				}
 				childExists = true
 				break
 			}
 		}
 
-		// If the child entry does not exist, add a new entry
+		// Если запись о ребенке не найдена, добавляем новую
 		if !childExists {
 			family = append(family, map[string]interface{}{
 				"child_id":     child.ID,
@@ -87,10 +93,13 @@ func (s *ChildService) UpdateChild(firebaseUID string, input models.Child) (mode
 				"age":          child.Age,
 				"birthday":     child.Birthday,
 				"firebase_uid": child.FirebaseUID,
-				"isBinded":     true,
+				"isBinded":     child.IsBinded,
+				"usage_data":   child.UsageData,
+				"code":         child.Code,
 			})
 		}
 
+		// Сохраняем обновленный массив family
 		familyJSON, _ := json.Marshal(family)
 		parent.Family = string(familyJSON)
 		s.ParentRepo.Save(parent)
