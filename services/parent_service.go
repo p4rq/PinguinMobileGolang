@@ -5,6 +5,9 @@ import (
 	"PinguinMobile/repositories"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -229,4 +232,122 @@ func (s *ParentService) UnblockApps(parentFirebaseUID, childFirebaseUID string, 
 	}
 
 	return nil
+}
+
+// BlockAppsByTime блокирует приложения на определенное время
+func (s *ParentService) BlockAppsByTime(parentFirebaseUID string, childFirebaseUID string, blocks []models.AppTimeBlock) error {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, childFirebaseUID) {
+		return errors.New("child does not belong to this parent")
+	}
+
+	// Валидация временных блоков
+	for i, block := range blocks {
+		// Проверяем формат времени
+		if _, err := time.Parse("15:04", block.StartTime); err != nil {
+			return errors.New("invalid start time format for app " + block.AppPackage)
+		}
+
+		if _, err := time.Parse("15:04", block.EndTime); err != nil {
+			return errors.New("invalid end time format for app " + block.AppPackage)
+		}
+
+		// Проверяем дни недели
+		if block.DaysOfWeek != "" {
+			days := strings.Split(block.DaysOfWeek, ",")
+			for _, day := range days {
+				dayNum, err := strconv.Atoi(day)
+				if err != nil || dayNum < 1 || dayNum > 7 {
+					return errors.New("invalid day of week format for app " + block.AppPackage)
+				}
+			}
+		} else {
+			// Если дни не указаны, блокируем на все дни недели
+			blocks[i].DaysOfWeek = "1,2,3,4,5,6,7"
+		}
+	}
+
+	// Добавляем блокировки
+	return s.ChildRepo.AddTimeBlockedApps(child.ID, blocks)
+}
+
+// UnblockAppsByTime отменяет временную блокировку приложений
+func (s *ParentService) UnblockAppsByTime(parentFirebaseUID string, childFirebaseUID string, appPackages []string) error {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, childFirebaseUID) {
+		return errors.New("child does not belong to this parent")
+	}
+
+	// Удаляем блокировки
+	return s.ChildRepo.RemoveTimeBlockedApps(child.ID, appPackages)
+}
+
+// GetTimeBlockedApps возвращает список приложений с временной блокировкой
+func (s *ParentService) GetTimeBlockedApps(parentFirebaseUID string, childFirebaseUID string) ([]models.AppTimeBlock, error) {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return nil, errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return nil, errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, childFirebaseUID) {
+		return nil, errors.New("child does not belong to this parent")
+	}
+
+	// Получаем список блокировок
+	return s.ChildRepo.GetTimeBlockedApps(child.ID)
+}
+
+// isChildInFamily проверяет, принадлежит ли ребенок семье родителя
+func (s *ParentService) isChildInFamily(parent models.Parent, childFirebaseUID string) bool {
+	// Проверяем, что Family не пустой
+	if parent.Family == "" {
+		return false
+	}
+
+	// Парсим JSON
+	var family []map[string]interface{}
+	if err := json.Unmarshal([]byte(parent.Family), &family); err != nil {
+		return false
+	}
+
+	// Проверяем, есть ли ребенок в семье
+	for _, member := range family {
+		if firebaseUID, ok := member["firebase_uid"].(string); ok && firebaseUID == childFirebaseUID {
+			return true
+		}
+	}
+
+	return false
 }

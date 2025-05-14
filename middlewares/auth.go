@@ -36,6 +36,9 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			// Сохраняем все claims в контексте
+			c.Set("claims", claims) // Добавляем эту строку
+
 			// Проверяем и извлекаем firebase_uid
 			if firebaseUID, exists := claims["firebase_uid"].(string); exists {
 				c.Set("firebase_uid", firebaseUID)

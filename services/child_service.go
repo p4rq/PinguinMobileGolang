@@ -5,6 +5,9 @@ import (
 	"PinguinMobile/repositories"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"firebase.google.com/go/auth"
@@ -279,4 +282,74 @@ func (s *ChildService) RebindChild(childCode, parentFirebaseUID string) (models.
 	}
 
 	return child, nil
+}
+
+// CheckAppBlocking проверяет, заблокировано ли приложение (постоянно или временно)
+func (s *ChildService) CheckAppBlocking(childFirebaseUID string, appPackage string) (bool, string, error) {
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Проверяем постоянную блокировку
+	if child.BlockedApps != "" {
+		blockedApps := strings.Split(child.BlockedApps, ",")
+		for _, app := range blockedApps {
+			if app == appPackage {
+				return true, "permanently blocked", nil
+			}
+		}
+	}
+
+	// Проверяем временную блокировку
+	if child.TimeBlockedApps == "" {
+		return false, "", nil
+	}
+
+	var timeBlocks []models.AppTimeBlock
+	if err := json.Unmarshal([]byte(child.TimeBlockedApps), &timeBlocks); err != nil {
+		return false, "", err
+	}
+
+	// Получаем текущее время и день недели
+	now := time.Now()
+	currentTime := now.Format("15:04")
+	currentDayOfWeek := int(now.Weekday())
+	if currentDayOfWeek == 0 { // В Go воскресенье = 0, мы используем 7
+		currentDayOfWeek = 7
+	}
+
+	// Проверяем каждую временную блокировку
+	for _, block := range timeBlocks {
+		if block.AppPackage == appPackage {
+			// Проверяем, применяется ли блокировка в текущий день недели
+			if strings.Contains(block.DaysOfWeek, strconv.Itoa(currentDayOfWeek)) {
+				// Проверяем, находится ли текущее время в интервале блокировки
+				if isTimeInRange(currentTime, block.StartTime, block.EndTime) {
+					return true, fmt.Sprintf("time blocked until %s", block.EndTime), nil
+				}
+			}
+		}
+	}
+
+	return false, "", nil
+}
+
+// isTimeInRange проверяет, входит ли время в указанный интервал
+func isTimeInRange(current, start, end string) bool {
+	// Парсим время
+	layout := "15:04"
+	currentTime, _ := time.Parse(layout, current)
+	startTime, _ := time.Parse(layout, start)
+	endTime, _ := time.Parse(layout, end)
+
+	// Особый случай: если конечное время меньше начального (блокировка через полночь)
+	if endTime.Before(startTime) {
+		// Если текущее время >= начальное ИЛИ <= конечное, то оно в интервале
+		return !currentTime.Before(startTime) || !currentTime.After(endTime)
+	}
+
+	// Обычный случай: проверка, что текущее время между началом и концом
+	return !currentTime.Before(startTime) && !currentTime.After(endTime)
 }

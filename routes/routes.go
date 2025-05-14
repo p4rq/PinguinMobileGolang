@@ -16,7 +16,7 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/auth/token-verify", controllers.TokenVerify)
 	// Маршрут WebSocket (проверьте, что он есть)
 	r.GET("/ws", middlewares.AuthMiddleware(), controllers.ServeWs)
-
+	r.GET("/debug/auth", middlewares.AuthMiddleware(), controllers.DebugAuth)
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())
@@ -26,6 +26,11 @@ func RegisterRoutes(r *gin.Engine) {
 		parents.DELETE("/:firebase_uid", controllers.DeleteParent)
 		parents.POST("/block/apps", controllers.BlockApps)
 		parents.POST("/unblock/apps", controllers.UnblockApps)
+
+		// Новые маршруты для временной блокировки
+		parents.POST("/block/apps/time", controllers.BlockAppsByTime)
+		parents.POST("/unblock/apps/time", controllers.UnblockAppsByTime)
+		parents.GET("/block/apps/time/:firebase_uid", controllers.GetTimeBlockedApps)
 	}
 
 	// Separate route group for unbind and monitor routes to avoid conflicts
@@ -53,6 +58,9 @@ func RegisterRoutes(r *gin.Engine) {
 		children.POST("/:firebase_uid/logout", controllers.LogoutChild)
 		children.POST("/:firebase_uid/monitor", controllers.MonitorChild)
 		children.POST("/rebind", controllers.RebindChild)
+
+		// Новый маршрут для проверки блокировки
+		children.GET("/check-blocking", controllers.CheckAppBlocking)
 	}
 
 	// Chat routes
