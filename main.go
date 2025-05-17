@@ -15,6 +15,34 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// ChatServiceAdapter адаптирует ChatService для соответствия интерфейсу ChatMessageService
+type ChatServiceAdapter struct {
+	chatService *services.ChatService
+}
+
+// SaveMessage реализует интерфейс ChatMessageService для сохранения сообщений
+func (a *ChatServiceAdapter) SaveMessage(message *models.ChatMessage) error {
+
+	return a.chatService.ChatRepo.SaveMessage(message)
+}
+
+// GetMessages реализует интерфейс ChatMessageService для получения сообщений
+func (a *ChatServiceAdapter) GetMessages(parentID string, limit int) ([]*models.ChatMessage, error) {
+
+	messages, err := a.chatService.GetFamilyMessages("", parentID, "", limit, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// Преобразуем []models.ChatMessage в []*models.ChatMessage
+	result := make([]*models.ChatMessage, len(messages))
+	for i := range messages {
+		result[i] = &messages[i]
+	}
+
+	return result, nil
+}
+
 func main() {
 	// Load environment variables from .env file
 	err := godotenv.Load()
@@ -45,10 +73,11 @@ func main() {
 	controllers.SetChildService(childService)
 	controllers.SetParentService(parentService)
 	controllers.SetChatService(chatService)
-	// controllers.InitWebsocket(chatService)
 
-	// Инициализация WebSocket Hub
-	webSocketHub := websocket.NewHub()
+	// Инициализация WebSocket Hub с адаптером
+	chatAdapter := &ChatServiceAdapter{chatService: chatService}
+	webSocketHub := websocket.NewHub(chatAdapter)
+	go webSocketHub.Run() // Не забудьте запустить Hub в горутине
 	controllers.SetWebSocketHub(webSocketHub)
 
 	// Initialize Gin router

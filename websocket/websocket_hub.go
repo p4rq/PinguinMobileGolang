@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 )
 
 // WebSocketMessage структура сообщения для WebSocket
@@ -39,10 +40,19 @@ type Hub struct {
 	messageHistory   map[string][]WebSocketMessage
 	historyMaxSize   int
 	messageHistoryMu sync.Mutex // Отдельный мьютекс для истории сообщений
+
+	// Добавьте сервис сообщений
+	messageService ChatMessageService
+}
+
+// ChatMessageService интерфейс для работы с сообщениями чата
+type ChatMessageService interface {
+	SaveMessage(message *models.ChatMessage) error
+	GetMessages(parentID string, limit int) ([]*models.ChatMessage, error)
 }
 
 // NewHub создает новый хаб
-func NewHub() *Hub {
+func NewHub(messageService ChatMessageService) *Hub {
 	return &Hub{
 		clients:        make(map[string]map[*Client]bool),
 		broadcast:      make(chan WebSocketMessage),
@@ -50,6 +60,7 @@ func NewHub() *Hub {
 		unregister:     make(chan *Client),
 		messageHistory: make(map[string][]WebSocketMessage),
 		historyMaxSize: 100, // Хранить до 100 последних сообщений
+		messageService: messageService,
 	}
 }
 
@@ -215,6 +226,32 @@ func (h *Hub) saveMessageToHistory(message WebSocketMessage) {
 	// Добавляем новое сообщение
 	history = append(history, message)
 	h.messageHistory[message.ParentID] = history
+
+	// Сохраняем сообщение в БД, если это сообщение чата
+	if message.Type == "chat_message" && h.messageService != nil {
+		// Проверяем, что сообщение содержит необходимые поля
+		if msg, ok := message.Message.(map[string]interface{}); ok {
+			if text, exists := msg["text"].(string); exists {
+				// Создаем объект сообщения с правильными именами полей
+				// ВАЖНО: используйте фактические имена полей из models.ChatMessage
+				chatMessage := &models.ChatMessage{
+					ParentID:   message.ParentID,
+					SenderID:   message.SenderID,
+					SenderType: message.SenderType,
+					// Используйте правильные имена полей вашей структуры:
+					Message:   text,       // возможно, у вас это поле называется Content, а не Text
+					CreatedAt: time.Now(), // возможно, у вас это поле называется CreatedAt, а не Timestamp
+					Channel:   message.Channel,
+				}
+
+				// Вызываем сервис для сохранения сообщения в БД
+				err := h.messageService.SaveMessage(chatMessage)
+				if err != nil {
+					log.Printf("Error saving message to database: %v", err)
+				}
+			}
+		}
+	}
 }
 
 // getMessageHistory возвращает историю сообщений для указанной семьи
