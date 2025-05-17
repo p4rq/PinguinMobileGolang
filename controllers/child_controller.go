@@ -3,6 +3,8 @@ package controllers
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/services"
+	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -58,18 +60,24 @@ func LogoutChild(c *gin.Context) {
 	c.JSON(http.StatusOK, child)
 }
 
+// MonitorChild обрабатывает получение данных об использовании устройства ребенком
 func MonitorChild(c *gin.Context) {
-	var request struct {
-		Sessions []models.Session `json:"sessions" binding:"required"`
+	firebaseUID := c.Param("firebase_uid")
+
+	var input struct {
+		UsageData json.RawMessage `json:"usage_data" binding:"required"`
 	}
 
-	if err := c.ShouldBindJSON(&request); err != nil {
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	childFirebaseUID := c.Param("firebase_uid")
-	err := childService.MonitorChild(childFirebaseUID, request.Sessions)
+	// Логируем входные данные для отладки
+	fmt.Printf("Received usage data for child %s: %s\n", firebaseUID, string(input.UsageData))
+
+	// Обрабатываем данные с учетом новой логики (кумулятивные данные за день)
+	err := parentService.MonitorChildWithDailyData(firebaseUID, input.UsageData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

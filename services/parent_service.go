@@ -509,3 +509,36 @@ func formatDuration(hours float64) string {
 		return fmt.Sprintf("%.1f часов", hours)
 	}
 }
+
+// MonitorChildWithDailyData сохраняет кумулятивные данные использования устройства за текущий день
+func (s *ParentService) MonitorChildWithDailyData(firebaseUID string, usageData json.RawMessage) error {
+	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return err
+	}
+
+	// Обрабатываем входные данные как кумулятивные за день
+	// Проверяем, что данные имеют правильный формат
+	var dataArray []map[string]interface{}
+	if err := json.Unmarshal(usageData, &dataArray); err != nil {
+		return fmt.Errorf("invalid usage data format: %v", err)
+	}
+
+	// Добавляем метку времени для отслеживания последнего обновления
+	now := time.Now()
+	for i := range dataArray {
+		dataArray[i]["last_updated"] = now.Format(time.RFC3339)
+	}
+
+	// Преобразуем обратно в JSON
+	updatedData, err := json.Marshal(dataArray)
+	if err != nil {
+		return err
+	}
+
+	// Обновляем данные ребенка
+	child.UsageData = string(updatedData)
+
+	// Сохраняем в базу данных
+	return s.ChildRepo.Save(child)
+}

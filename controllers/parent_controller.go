@@ -3,7 +3,9 @@ package controllers
 import (
 	"PinguinMobile/services"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -170,9 +172,19 @@ func MonitorChildUsage(c *gin.Context) {
 		if len(child.UsageData) > 0 && child.UsageData[0] == '[' {
 			var dataArray []interface{}
 			if err := json.Unmarshal([]byte(child.UsageData), &dataArray); err == nil {
-				usageData = dataArray
+				// Добавляем информацию о том, что это кумулятивные данные за день
+				result := map[string]interface{}{
+					"child_id":   child.FirebaseUID,
+					"name":       child.Name,
+					"usage_data": dataArray,
+					"data_type":  "cumulative_daily",                                       // Метка о типе данных
+					"day_start":  time.Now().Truncate(24 * time.Hour).Format(time.RFC3339), // Начало текущего дня
+				}
+				c.JSON(http.StatusOK, gin.H{"message": true, "data": result})
+				return
 			} else {
-				// В случае ошибки разбора, возвращаем пустой массив
+				// Логируем ошибку разбора
+				fmt.Printf("Error parsing usage data array: %v\n", err)
 				usageData = []interface{}{}
 			}
 		} else {
@@ -181,7 +193,8 @@ func MonitorChildUsage(c *gin.Context) {
 			if err := json.Unmarshal([]byte(child.UsageData), &dataObject); err == nil {
 				usageData = dataObject
 			} else {
-				// В случае ошибки, возвращаем пустой массив
+				// Логируем ошибку разбора
+				fmt.Printf("Error parsing usage data object: %v\n", err)
 				usageData = []interface{}{}
 			}
 		}
@@ -192,8 +205,9 @@ func MonitorChildUsage(c *gin.Context) {
 		"child_id":   child.FirebaseUID,
 		"name":       child.Name,
 		"usage_data": usageData,
+		"data_type":  "cumulative_daily",                                       // Метка о типе данных
+		"day_start":  time.Now().Truncate(24 * time.Hour).Format(time.RFC3339), // Начало текущего дня
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": true, "data": result})
 }
 func BlockApps(c *gin.Context) {
