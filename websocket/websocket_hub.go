@@ -335,18 +335,26 @@ func getSenderType(senderID, parentID string) string {
 }
 
 // getMessageHistory возвращает историю сообщений для указанной семьи
-func (h *Hub) getMessageHistory(parentID string) []WebSocketMessage {
+func (h *Hub) getMessageHistory(parentID string) []map[string]interface{} {
 	h.messageHistoryMu.Lock()
 	defer h.messageHistoryMu.Unlock()
 
+	result := []map[string]interface{}{}
+
 	if history, exists := h.messageHistory[parentID]; exists {
-		// Создаем копию слайса, чтобы избежать проблем с конкурентным доступом
-		result := make([]WebSocketMessage, len(history))
-		copy(result, history)
-		return result
+		for _, msg := range history {
+			if m, ok := msg.Message.(map[string]interface{}); ok {
+				simplifiedMsg := map[string]interface{}{
+					"sender_id": msg.SenderID,
+					"text":      m["text"],
+					"time":      time.Now(), // или извлекайте время из сообщения, если оно есть
+				}
+				result = append(result, simplifiedMsg)
+			}
+		}
 	}
 
-	return make([]WebSocketMessage, 0)
+	return result
 }
 
 // Упрощенная отправка истории
