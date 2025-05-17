@@ -28,10 +28,8 @@ func RegisterRoutes(r *gin.Engine) {
 		parents.POST("/unblock/apps", controllers.UnblockApps)
 
 		// Новые маршруты для временной блокировки
-		parents.POST("/block/apps/time", controllers.BlockAppsByTime)
-		parents.POST("/unblock/apps/time", controllers.UnblockAppsByTime)
 		parents.GET("/block/apps/time/:firebase_uid", controllers.GetTimeBlockedApps)
-
+		parents.POST("/apps/time-rules", controllers.ManageAppTimeRules)
 		// Маршруты для одноразовой блокировки
 		parents.POST("/:firebase_uid/block-apps-once", controllers.BlockAppsTempOnce)
 		parents.GET("/:firebase_uid/block-apps-once/:child_id", controllers.GetOneTimeBlocks)

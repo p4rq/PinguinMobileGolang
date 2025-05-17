@@ -314,3 +314,55 @@ func CancelOneTimeBlocks(c *gin.Context) {
 		"message": "Временные блокировки успешно отменены",
 	})
 }
+
+// ManageAppTimeRules обрабатывает как блокировку, так и разблокировку приложений по времени
+func ManageAppTimeRules(c *gin.Context) {
+	var request struct {
+		ParentFirebaseUID string   `json:"parent_firebase_uid" binding:"required"`
+		ChildFirebaseUID  string   `json:"child_firebase_uid" binding:"required"`
+		Apps              []string `json:"apps" binding:"required"`
+		Action            string   `json:"action" binding:"required,oneof=block unblock"` // Определяет действие
+		StartTime         string   `json:"start_time,omitempty"`                          // Формат "HH:MM", только для блокировки
+		EndTime           string   `json:"end_time,omitempty"`                            // Формат "HH:MM", только для блокировки
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var err error
+	if request.Action == "block" {
+		// Проверка наличия необходимых для блокировки параметров
+		if request.StartTime == "" || request.EndTime == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "start_time and end_time are required for block action"})
+			return
+		}
+
+		err = parentService.BlockAppsByTime(
+			request.ParentFirebaseUID,
+			request.ChildFirebaseUID,
+			request.Apps,
+			request.StartTime,
+			request.EndTime,
+		)
+	} else { // "unblock"
+		err = parentService.UnblockAppsByTime(
+			request.ParentFirebaseUID,
+			request.ChildFirebaseUID,
+			request.Apps,
+		)
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	actionText := "blocked"
+	if request.Action == "unblock" {
+		actionText = "unblocked"
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Apps %s by time successfully", actionText)})
+}
