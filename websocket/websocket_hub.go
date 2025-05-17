@@ -351,31 +351,63 @@ func (h *Hub) getMessageHistory(parentID string) []WebSocketMessage {
 
 // Упрощенная отправка истории
 func (h *Hub) sendMessageHistory(client *Client) {
+	log.Printf("Getting message history for parent_id: %s", client.parentID)
+
+	// Проверяем сначала кэш в памяти
+	cachedHistory := h.getMessageHistory(client.parentID)
+	if len(cachedHistory) > 0 {
+		log.Printf("Found %d cached messages for parent_id: %s", len(cachedHistory), client.parentID)
+
+		// Отправляем историю из кэша
+		client.send <- WebSocketMessage{
+			Type:     "message_history",
+			ParentID: client.parentID,
+			Message:  cachedHistory,
+		}
+		return
+	}
+
+	// Если кэш пуст, обращаемся к БД
 	var messages []*models.ChatMessage
+	var err error
 
-	// Берем сообщения напрямую из базы данных
 	if h.messageService != nil {
-		messages, _ = h.messageService.GetMessages(client.parentID, 30)
-	}
-
-	if len(messages) == 0 {
-		return // Нет сообщений
-	}
-
-	// Преобразуем в упрощенный формат
-	simpleHistory := make([]map[string]interface{}, len(messages))
-	for i, msg := range messages {
-		simpleHistory[i] = map[string]interface{}{
-			"sender_id": msg.SenderID,
-			"text":      msg.Message,
-			"time":      msg.CreatedAt,
+		log.Printf("Loading messages from DB for parent_id: %s", client.parentID)
+		messages, err = h.messageService.GetMessages(client.parentID, 30)
+		if err != nil {
+			log.Printf("Error loading messages from DB: %v", err)
+			// Отправляем пустой массив и ошибку
+			client.send <- WebSocketMessage{
+				Type:     "message_history",
+				ParentID: client.parentID,
+				Message:  []interface{}{},
+			}
+			return
 		}
 	}
 
-	// Отправляем упрощенную историю
-	client.send <- WebSocketMessage{
+	log.Printf("Found %d messages in DB for parent_id: %s", len(messages), client.parentID)
+
+	// Даже если нет сообщений, отправляем пустой массив
+	simpleHistory := make([]map[string]interface{}, len(messages))
+	for i, msg := range messages {
+		simpleHistory[i] = map[string]interface{}{
+			"sender_id":   msg.SenderID,
+			"text":        msg.Message,
+			"time":        msg.CreatedAt,
+			"sender_name": msg.SenderName,
+		}
+	}
+
+	// Отправляем результат с безопасной обработкой ошибок
+	select {
+	case client.send <- WebSocketMessage{
 		Type:     "message_history",
 		ParentID: client.parentID,
 		Message:  simpleHistory,
+	}:
+		log.Printf("Successfully sent history (%d items) to client", len(simpleHistory))
+	default:
+		log.Printf("Failed to send history to client: channel blocked or closed")
 	}
 }
