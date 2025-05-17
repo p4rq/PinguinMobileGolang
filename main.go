@@ -74,10 +74,10 @@ func main() {
 	controllers.SetParentService(parentService)
 	controllers.SetChatService(chatService)
 
-	// Инициализация WebSocket Hub с адаптером
+	// Инициализация WebSocket Hub с адаптером и доступом к БД
 	chatAdapter := &ChatServiceAdapter{chatService: chatService}
-	webSocketHub := websocket.NewHub(chatAdapter)
-	go webSocketHub.Run() // Не забудьте запустить Hub в горутине
+	webSocketHub := websocket.NewHub(chatAdapter, config.DB)
+	go webSocketHub.Run()
 	controllers.SetWebSocketHub(webSocketHub)
 
 	// Initialize Gin router

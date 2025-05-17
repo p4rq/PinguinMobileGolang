@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // WebSocketMessage структура сообщения для WebSocket
@@ -16,6 +18,14 @@ type WebSocketMessage struct {
 	SenderID   string      `json:"sender_id,omitempty"`
 	SenderType string      `json:"sender_type,omitempty"`
 	Channel    string      `json:"channel,omitempty"`
+}
+
+// FamilyMember представляет члена семьи для WebSocket
+type FamilyMember struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // "parent" или "child"
+	ParentID string `json:"parent_id"`
 }
 
 // Hub управляет всеми соединениями WebSocket
@@ -35,14 +45,18 @@ type Hub struct {
 	// Мьютекс для синхронизации доступа к clients
 	mu sync.Mutex
 
-	// Новое поле для хранения истории сообщений по parent_id
-	// Ограничим историю до 100 последних сообщений для каждой семьи
+	// Для хранения истории сообщений по parent_id
 	messageHistory   map[string][]WebSocketMessage
 	historyMaxSize   int
-	messageHistoryMu sync.Mutex // Отдельный мьютекс для истории сообщений
+	messageHistoryMu sync.Mutex
 
-	// Добавьте сервис сообщений
+	// Кэш для информации о семьях
+	familyMembers   map[string][]FamilyMember // key: parent_id, value: члены семьи
+	familyMembersMu sync.Mutex
+
+	// Сервисы
 	messageService ChatMessageService
+	db             *gorm.DB // Для доступа к базе данных
 }
 
 // ChatMessageService интерфейс для работы с сообщениями чата
@@ -52,15 +66,17 @@ type ChatMessageService interface {
 }
 
 // NewHub создает новый хаб
-func NewHub(messageService ChatMessageService) *Hub {
+func NewHub(messageService ChatMessageService, db *gorm.DB) *Hub {
 	return &Hub{
 		clients:        make(map[string]map[*Client]bool),
 		broadcast:      make(chan WebSocketMessage),
 		register:       make(chan *Client),
 		unregister:     make(chan *Client),
 		messageHistory: make(map[string][]WebSocketMessage),
-		historyMaxSize: 100, // Хранить до 100 последних сообщений
+		historyMaxSize: 100,
 		messageService: messageService,
+		familyMembers:  make(map[string][]FamilyMember),
+		db:             db,
 	}
 }
 
@@ -74,8 +90,10 @@ func (h *Hub) Run() {
 				h.clients[client.parentID] = make(map[*Client]bool)
 			}
 			h.clients[client.parentID][client] = true
-			log.Printf("Client registered: %s, type: %s, parentID: %s", client.userID, client.userType, client.parentID)
 			h.mu.Unlock()
+
+			// Загружаем данные о членах семьи, если еще не загружены
+			h.loadFamilyMembers(client.parentID)
 
 			// Отправляем историю новому клиенту
 			go h.sendMessageHistory(client)
@@ -85,122 +103,152 @@ func (h *Hub) Run() {
 			if _, ok := h.clients[client.parentID]; ok {
 				delete(h.clients[client.parentID], client)
 				close(client.send)
-				// Если это был последний клиент для этой семьи, удаляем карту
 				if len(h.clients[client.parentID]) == 0 {
 					delete(h.clients, client.parentID)
 				}
-				log.Printf("Client unregistered: %s", client.userID)
 			}
 			h.mu.Unlock()
 
 		case message := <-h.broadcast:
 			h.mu.Lock()
-			if clients, ok := h.clients[message.ParentID]; ok {
+			clients, ok := h.clients[message.ParentID]
+			h.mu.Unlock()
+
+			if ok {
 				for client := range clients {
 					select {
 					case client.send <- message:
 					default:
+						h.mu.Lock()
+						delete(h.clients[message.ParentID], client)
 						close(client.send)
-						delete(clients, client)
-						if len(clients) == 0 {
-							delete(h.clients, client.parentID)
+						if len(h.clients[message.ParentID]) == 0 {
+							delete(h.clients, message.ParentID)
 						}
+						h.mu.Unlock()
 					}
 				}
 			}
-			h.mu.Unlock()
 
-			// Сохраняем сообщение в историю
-			h.saveMessageToHistory(message)
+			// Сохраняем сообщение в истории
+			if message.Type == "chat_message" || strings.HasPrefix(message.Type, "system_") {
+				h.saveMessageToHistory(message)
+			}
 		}
 	}
 }
 
-// BroadcastChatMessage отправляет сообщение чата всем клиентам семьи и сохраняет его в истории
-func (h *Hub) BroadcastChatMessage(chatMessage *models.ChatMessage) {
-	// Подготавливаем сообщение для отправки
-	payload := WebSocketMessage{
+// BroadcastChatMessage отправляет сообщение чата всем подключенным клиентам в семье
+func (h *Hub) BroadcastChatMessage(message *models.ChatMessage) {
+	// Преобразуем модель ChatMessage в WebSocketMessage
+	wsMessage := WebSocketMessage{
 		Type:       "chat_message",
-		ParentID:   chatMessage.ParentID,
-		Message:    chatMessage,
-		SenderID:   chatMessage.SenderID,
-		SenderType: chatMessage.SenderType,
-		Channel:    chatMessage.Channel,
+		ParentID:   message.ParentID,
+		SenderID:   message.SenderID,
+		SenderType: message.SenderType,
+		Channel:    getDefaultChannel(message.Channel),
+		Message: map[string]interface{}{
+			"text":         message.Message,
+			"sender_name":  message.SenderName,
+			"timestamp":    message.CreatedAt,
+			"message_type": message.MessageType,
+			"message_id":   message.ID,
+			// Медиа поля добавляем только если они заполнены
+			"media_url":  message.MediaURL,
+			"media_name": message.MediaName,
+			"media_size": message.MediaSize,
+		},
 	}
 
-	// Кодируем и отправляем
-	h.broadcast <- payload
+	// Отправляем сообщение всем подключенным клиентам данной семьи
+	h.broadcast <- wsMessage
 
-	// Дополнительно можно сохранить сообщение в базу данных через отдельный сервис
-	// messageService.SaveMessage(chatMessage)
+	// Сохраняем сообщение в истории
+	h.saveMessageToHistory(wsMessage)
 }
 
-// BroadcastSystemMessage отправляет системное сообщение
-func (h *Hub) BroadcastSystemMessage(parentID string, messageType string, content interface{}) {
-	payload := WebSocketMessage{
-		Type:     messageType,
-		ParentID: parentID,
-		Message:  content,
+// loadFamilyMembers загружает информацию о членах семьи из базы данных
+func (h *Hub) loadFamilyMembers(parentID string) {
+	h.familyMembersMu.Lock()
+	defer h.familyMembersMu.Unlock()
+
+	// Проверяем, есть ли уже данные о семье в кэше
+	if _, exists := h.familyMembers[parentID]; exists {
+		return
 	}
 
-	h.broadcast <- payload
-}
+	members := []FamilyMember{}
 
-// BroadcastDeviceUsage отправляет информацию об использовании устройства ребенка родителю
-func (h *Hub) BroadcastDeviceUsage(parentID string, usageData map[string]interface{}) {
-	message := WebSocketMessage{
-		Type:     "device_usage",
-		ParentID: parentID,
-		Message:  usageData,
+	// 1. Загружаем основного родителя
+	var parent models.Parent
+	if err := h.db.Where("firebase_uid = ?", parentID).First(&parent).Error; err != nil {
+		log.Printf("Error loading parent %s: %v", parentID, err)
+		return
 	}
-	h.broadcast <- message
-}
 
-// BroadcastAppActivity отправляет информацию о текущем активном приложении
-func (h *Hub) BroadcastAppActivity(parentID string, childID string, appData map[string]interface{}) {
-	message := WebSocketMessage{
-		Type:     "app_activity",
-		ParentID: parentID,
-		Message:  appData,
-		SenderID: childID,
+	// Добавляем родителя в список членов семьи
+	members = append(members, FamilyMember{
+		ID:       parent.FirebaseUID,
+		Name:     parent.Name,
+		Type:     "parent",
+		ParentID: parent.FirebaseUID,
+	})
+
+	// 2. Загружаем других родителей из той же семьи (если есть)
+	var otherParents []models.Parent
+	if err := h.db.Where("family = ? AND firebase_uid != ?", parent.Family, parentID).Find(&otherParents).Error; err != nil {
+		log.Printf("Error loading other parents: %v", err)
+	} else {
+		for _, op := range otherParents {
+			members = append(members, FamilyMember{
+				ID:       op.FirebaseUID,
+				Name:     op.Name,
+				Type:     "parent",
+				ParentID: parentID,
+			})
+		}
 	}
-	h.broadcast <- message
-}
 
-// BroadcastScreenTimeAlert отправляет уведомление о превышении лимита экранного времени
-func (h *Hub) BroadcastScreenTimeAlert(parentID string, childID string, alertData map[string]interface{}) {
-	message := WebSocketMessage{
-		Type:     "screen_time_alert",
-		ParentID: parentID,
-		Message:  alertData,
-		SenderID: childID,
+	// 3. Загружаем детей, привязанных к родителю
+	var children []models.Child
+	if err := h.db.Where("parent_id = ?", parentID).Find(&children).Error; err != nil {
+		log.Printf("Error loading children: %v", err)
+	} else {
+		for _, child := range children {
+			members = append(members, FamilyMember{
+				ID:       child.FirebaseUID,
+				Name:     child.Name,
+				Type:     "child",
+				ParentID: parentID,
+			})
+		}
 	}
-	h.broadcast <- message
+
+	// Сохраняем список членов семьи в кэше
+	h.familyMembers[parentID] = members
+	log.Printf("Loaded %d family members for parent %s", len(members), parentID)
 }
 
-// BroadcastBlockedContentAttempt отправляет уведомление о попытке доступа к запрещенному контенту
-func (h *Hub) BroadcastBlockedContentAttempt(parentID string, childID string, contentData map[string]interface{}) {
-	message := WebSocketMessage{
-		Type:     "blocked_content_attempt",
-		ParentID: parentID,
-		Message:  contentData,
-		SenderID: childID,
+// getFamilyMember возвращает информацию о члене семьи по его ID
+func (h *Hub) getFamilyMember(parentID, memberID string) *FamilyMember {
+	h.familyMembersMu.Lock()
+	defer h.familyMembersMu.Unlock()
+
+	members, exists := h.familyMembers[parentID]
+	if !exists {
+		return nil
 	}
-	h.broadcast <- message
-}
 
-// BroadcastScreenTimeLimit отправляет информацию о новых настройках лимита экранного времени
-func (h *Hub) BroadcastScreenTimeLimit(childID string, parentID string, limitData map[string]interface{}) {
-	message := WebSocketMessage{
-		Type:     "screen_time_limit_update",
-		ParentID: parentID,
-		Message:  limitData,
-		SenderID: childID,
+	for i := range members {
+		if members[i].ID == memberID {
+			return &members[i]
+		}
 	}
-	h.broadcast <- message
+
+	return nil
 }
 
-// saveMessageToHistory сохраняет сообщение в историю
+// saveMessageToHistory сохраняет сообщение в истории и в БД
 func (h *Hub) saveMessageToHistory(message WebSocketMessage) {
 	// Сохраняем только сообщения чата и системные уведомления
 	if message.Type != "chat_message" && !strings.HasPrefix(message.Type, "system_") {
@@ -227,22 +275,48 @@ func (h *Hub) saveMessageToHistory(message WebSocketMessage) {
 	history = append(history, message)
 	h.messageHistory[message.ParentID] = history
 
-	// Сохраняем сообщение в БД, если это сообщение чата
+	// Сохранение сообщения в БД для семейного чата
 	if message.Type == "chat_message" && h.messageService != nil {
-		// Проверяем, что сообщение содержит необходимые поля
+		// Проверяем, что сообщение содержит текст
 		if msg, ok := message.Message.(map[string]interface{}); ok {
 			if text, exists := msg["text"].(string); exists {
-				// Создаем объект сообщения с правильными именами полей
-				// ВАЖНО: используйте фактические имена полей из models.ChatMessage
-				chatMessage := &models.ChatMessage{
-					ParentID:  message.ParentID,
-					SenderID:  message.SenderID,
-					Message:   text,
-					CreatedAt: time.Now(),
-					Channel:   message.Channel,
+				// Получаем информацию об отправителе
+				senderName := ""
+				senderType := ""
+
+				// Проверяем есть ли в сообщении sender_name
+				if name, ok := msg["sender_name"].(string); ok && name != "" {
+					senderName = name
+				} else {
+					// Ищем отправителя среди членов семьи
+					if member := h.getFamilyMember(message.ParentID, message.SenderID); member != nil {
+						senderName = member.Name
+						senderType = member.Type
+					}
 				}
 
-				// Вызываем сервис для сохранения сообщения в БД
+				// Если тип отправителя не определен, определяем его
+				if senderType == "" {
+					senderType = message.SenderType
+					if senderType == "" {
+						senderType = getSenderType(message.SenderID, message.ParentID)
+					}
+				}
+
+				// Базовая информация о сообщении для семейного чата
+				chatMessage := &models.ChatMessage{
+					ParentID:    message.ParentID,
+					SenderID:    message.SenderID,
+					Message:     text,
+					CreatedAt:   time.Now(),
+					SenderName:  senderName,
+					SenderType:  senderType,
+					MessageType: "text", // По умолчанию текст
+					Channel:     getDefaultChannel(message.Channel),
+					IsPrivate:   false, // Всегда публичное для семейного чата
+					IsRead:      false, // По умолчанию не прочитано
+				}
+
 				err := h.messageService.SaveMessage(chatMessage)
 				if err != nil {
 					log.Printf("Error saving message to database: %v", err)
@@ -250,6 +324,22 @@ func (h *Hub) saveMessageToHistory(message WebSocketMessage) {
 			}
 		}
 	}
+}
+
+// getDefaultChannel возвращает канал по умолчанию, если не указан
+func getDefaultChannel(channel string) string {
+	if channel != "" {
+		return channel
+	}
+	return "general" // Канал по умолчанию
+}
+
+// getSenderType определяет тип отправителя
+func getSenderType(senderID, parentID string) string {
+	if senderID == parentID {
+		return "parent"
+	}
+	return "child"
 }
 
 // getMessageHistory возвращает историю сообщений для указанной семьи
