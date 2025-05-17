@@ -138,32 +138,24 @@ func (h *Hub) Run() {
 	}
 }
 
-// BroadcastChatMessage отправляет сообщение чата всем подключенным клиентам в семье
+// Упрощенная функция BroadcastChatMessage
 func (h *Hub) BroadcastChatMessage(message *models.ChatMessage) {
-	// Преобразуем модель ChatMessage в WebSocketMessage
+	// Создаем упрощенное WebSocket сообщение
 	wsMessage := WebSocketMessage{
-		Type:       "chat_message",
-		ParentID:   message.ParentID,
-		SenderID:   message.SenderID,
-		SenderType: message.SenderType,
-		Channel:    getDefaultChannel(message.Channel),
+		Type:     "chat_message",
+		ParentID: message.ParentID,
+		SenderID: message.SenderID,
 		Message: map[string]interface{}{
-			"text":         message.Message,
-			"sender_name":  message.SenderName,
-			"timestamp":    message.CreatedAt,
-			"message_type": message.MessageType,
-			"message_id":   message.ID,
-			// Медиа поля добавляем только если они заполнены
-			"media_url":  message.MediaURL,
-			"media_name": message.MediaName,
-			"media_size": message.MediaSize,
+			"text": message.Message,
+			// Добавляем только необходимую информацию
+			"message_id": message.ID,
+			// Если есть медиа, добавляем ссылку
+			"media_url": message.MediaURL,
 		},
 	}
 
-	// Отправляем сообщение всем подключенным клиентам данной семьи
+	// Отправляем сообщение всем
 	h.broadcast <- wsMessage
-
-	// Сохраняем сообщение в истории
 	h.saveMessageToHistory(wsMessage)
 }
 
@@ -357,26 +349,33 @@ func (h *Hub) getMessageHistory(parentID string) []WebSocketMessage {
 	return make([]WebSocketMessage, 0)
 }
 
-// sendMessageHistory отправляет историю сообщений новому клиенту
+// Упрощенная отправка истории
 func (h *Hub) sendMessageHistory(client *Client) {
-	history := h.getMessageHistory(client.parentID)
+	var messages []*models.ChatMessage
 
-	if len(history) == 0 {
-		return // Нет истории для отправки
+	// Берем сообщения напрямую из базы данных
+	if h.messageService != nil {
+		messages, _ = h.messageService.GetMessages(client.parentID, 30)
 	}
 
-	// Создаем контейнер для истории сообщений
-	historyContainer := WebSocketMessage{
+	if len(messages) == 0 {
+		return // Нет сообщений
+	}
+
+	// Преобразуем в упрощенный формат
+	simpleHistory := make([]map[string]interface{}, len(messages))
+	for i, msg := range messages {
+		simpleHistory[i] = map[string]interface{}{
+			"sender_id": msg.SenderID,
+			"text":      msg.Message,
+			"time":      msg.CreatedAt,
+		}
+	}
+
+	// Отправляем упрощенную историю
+	client.send <- WebSocketMessage{
 		Type:     "message_history",
 		ParentID: client.parentID,
-		Message:  history,
-	}
-
-	// Отправляем историю клиенту
-	select {
-	case client.send <- historyContainer:
-		// Успешно отправлено
-	default:
-		// Канал клиента переполнен или закрыт
+		Message:  simpleHistory,
 	}
 }
