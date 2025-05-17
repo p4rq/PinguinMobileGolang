@@ -159,15 +159,42 @@ func MonitorChildUsage(c *gin.Context) {
 		return
 	}
 
-	var usageData map[string]interface{}
-	json.Unmarshal([]byte(child.UsageData), &usageData)
-	usageData = map[string]interface{}{
+	// ИСПРАВЛЕНО: Правильно обрабатываем формат данных
+	var usageData interface{}
+
+	// Если данные пустые, возвращаем пустой массив вместо null
+	if child.UsageData == "" {
+		usageData = []interface{}{}
+	} else {
+		// Проверяем, является ли формат массивом (начинается с '[')
+		if len(child.UsageData) > 0 && child.UsageData[0] == '[' {
+			var dataArray []interface{}
+			if err := json.Unmarshal([]byte(child.UsageData), &dataArray); err == nil {
+				usageData = dataArray
+			} else {
+				// В случае ошибки разбора, возвращаем пустой массив
+				usageData = []interface{}{}
+			}
+		} else {
+			// Если не массив, пробуем как объект
+			var dataObject map[string]interface{}
+			if err := json.Unmarshal([]byte(child.UsageData), &dataObject); err == nil {
+				usageData = dataObject
+			} else {
+				// В случае ошибки, возвращаем пустой массив
+				usageData = []interface{}{}
+			}
+		}
+	}
+
+	// Формируем результат
+	result := map[string]interface{}{
 		"child_id":   child.FirebaseUID,
 		"name":       child.Name,
 		"usage_data": usageData,
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": true, "data": usageData})
+	c.JSON(http.StatusOK, gin.H{"message": true, "data": result})
 }
 func BlockApps(c *gin.Context) {
 	var request struct {
