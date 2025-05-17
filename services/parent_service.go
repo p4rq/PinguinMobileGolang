@@ -515,3 +515,51 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 
 	return errors.New("invalid action")
 }
+
+// BlockAppsWithMultipleTimeRanges блокирует приложения с несколькими временными интервалами
+func (s *ParentService) BlockAppsWithMultipleTimeRanges(
+	parentUID string,
+	childUID string,
+	apps []string,
+	timeBlocks []struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		BlockName string `json:"block_name,omitempty"`
+	},
+) error {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	// Проверяем, принадлежит ли ребенок родителю
+	if !s.isChildInFamily(parent, childUID) {
+		return errors.New("child does not belong to this parent")
+	}
+
+	// Создаем записи о временной блокировке для каждого приложения и каждого временного интервала
+	var blocks []models.AppTimeBlock
+	for _, app := range apps {
+		for _, timeBlock := range timeBlocks {
+			block := models.AppTimeBlock{
+				AppPackage: app,
+				StartTime:  timeBlock.StartTime,
+				EndTime:    timeBlock.EndTime,
+				DaysOfWeek: "1,2,3,4,5,6,7", // По умолчанию все дни недели
+				IsOneTime:  false,
+				// BlockName:  timeBlock.BlockName,
+			}
+			blocks = append(blocks, block)
+		}
+	}
+
+	// Сохраняем блокировки
+	return s.ChildRepo.AddTimeBlockedApps(child.ID, blocks)
+}

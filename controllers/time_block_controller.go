@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"PinguinMobile/models"
 	"net/http"
 	"time"
 
@@ -12,8 +11,12 @@ import (
 func BlockAppsByTime(c *gin.Context) {
 	// Получаем данные из запроса
 	var request struct {
-		ChildID string                `json:"child_id" binding:"required"`
-		Blocks  []models.AppTimeBlock `json:"blocks" binding:"required"`
+		ChildID    string   `json:"child_id" binding:"required"`
+		Apps       []string `json:"apps" binding:"required"`
+		TimeBlocks []struct {
+			StartTime string `json:"start_time" binding:"required"`
+			EndTime   string `json:"end_time" binding:"required"`
+		} `json:"time_blocks" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -21,7 +24,7 @@ func BlockAppsByTime(c *gin.Context) {
 		return
 	}
 
-	// Получаем FirebaseUID родителя напрямую из контекста (установлен в AuthMiddleware)
+	// Получаем FirebaseUID родителя из контекста
 	parentFirebaseUID, exists := c.Get("firebase_uid")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: missing firebase_uid"})
@@ -35,19 +38,21 @@ func BlockAppsByTime(c *gin.Context) {
 		return
 	}
 
-	// Преобразуем запрос для использования с ManageAppTimeRules
-	for _, block := range request.Blocks {
-		err := parentService.ManageAppTimeRules(
-			parentFirebaseUID.(string),
-			request.ChildID,
-			[]string{block.AppPackage},
-			"block",
-			block.StartTime,
-			block.EndTime,
-		)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
+	// Для каждого приложения и каждого временного блока создаем блокировку
+	for _, app := range request.Apps {
+		for _, timeBlock := range request.TimeBlocks {
+			err := parentService.ManageAppTimeRules(
+				parentFirebaseUID.(string),
+				request.ChildID,
+				[]string{app},
+				"block",
+				timeBlock.StartTime,
+				timeBlock.EndTime,
+			)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
 		}
 	}
 

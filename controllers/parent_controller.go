@@ -322,8 +322,17 @@ func ManageAppTimeRules(c *gin.Context) {
 		ChildFirebaseUID  string   `json:"child_firebase_uid" binding:"required"`
 		Apps              []string `json:"apps" binding:"required"`
 		Action            string   `json:"action" binding:"required,oneof=block unblock"` // Определяет действие
-		StartTime         string   `json:"start_time,omitempty"`                          // Формат "HH:MM", только для блокировки
-		EndTime           string   `json:"end_time,omitempty"`                            // Формат "HH:MM", только для блокировки
+
+		// Поддержка старого формата
+		StartTime string `json:"start_time,omitempty"`
+		EndTime   string `json:"end_time,omitempty"`
+
+		// Поддержка нового формата с множественными блоками
+		TimeBlocks []struct {
+			StartTime string `json:"start_time"`
+			EndTime   string `json:"end_time"`
+			BlockName string `json:"block_name,omitempty"`
+		} `json:"time_blocks,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -332,30 +341,68 @@ func ManageAppTimeRules(c *gin.Context) {
 	}
 
 	// Проверка наличия необходимых для блокировки параметров
-	if request.Action == "block" && (request.StartTime == "" || request.EndTime == "") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "start_time and end_time are required for block action"})
-		return
+	if request.Action == "block" {
+		// Проверяем новый формат
+		if len(request.TimeBlocks) > 0 {
+			// Используем новый формат с множественными блоками
+			for _, timeBlock := range request.TimeBlocks {
+				for _, app := range request.Apps {
+					err := parentService.ManageAppTimeRules(
+						request.ParentFirebaseUID,
+						request.ChildFirebaseUID,
+						[]string{app},
+						request.Action,
+						timeBlock.StartTime,
+						timeBlock.EndTime,
+					)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+						return
+					}
+				}
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Apps blocked by time successfully"})
+			return
+		}
+
+		// Проверяем старый формат
+		if request.StartTime == "" || request.EndTime == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "start_time and end_time are required for block action"})
+			return
+		}
+
+		// Используем старый формат
+		err := parentService.ManageAppTimeRules(
+			request.ParentFirebaseUID,
+			request.ChildFirebaseUID,
+			request.Apps,
+			request.Action,
+			request.StartTime,
+			request.EndTime,
+		)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Apps blocked by time successfully"})
+	} else if request.Action == "unblock" {
+		// Для разблокировки ничего не меняем
+		err := parentService.ManageAppTimeRules(
+			request.ParentFirebaseUID,
+			request.ChildFirebaseUID,
+			request.Apps,
+			request.Action,
+			"", // Для разблокировки время не нужно
+			"", // Для разблокировки время не нужно
+		)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Apps unblocked by time successfully"})
 	}
-
-	// Используем единый метод вместо двух отдельных
-	err := parentService.ManageAppTimeRules(
-		request.ParentFirebaseUID,
-		request.ChildFirebaseUID,
-		request.Apps,
-		request.Action,
-		request.StartTime,
-		request.EndTime,
-	)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	actionText := "blocked"
-	if request.Action == "unblock" {
-		actionText = "unblocked"
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Apps %s by time successfully", actionText)})
 }

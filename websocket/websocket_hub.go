@@ -3,6 +3,7 @@ package websocket
 import (
 	"PinguinMobile/models"
 	"log"
+	"strings"
 	"sync"
 )
 
@@ -32,15 +33,23 @@ type Hub struct {
 
 	// Мьютекс для синхронизации доступа к clients
 	mu sync.Mutex
+
+	// Новое поле для хранения истории сообщений по parent_id
+	// Ограничим историю до 100 последних сообщений для каждой семьи
+	messageHistory   map[string][]WebSocketMessage
+	historyMaxSize   int
+	messageHistoryMu sync.Mutex // Отдельный мьютекс для истории сообщений
 }
 
 // NewHub создает новый хаб
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[string]map[*Client]bool),
-		broadcast:  make(chan WebSocketMessage),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients:        make(map[string]map[*Client]bool),
+		broadcast:      make(chan WebSocketMessage),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		messageHistory: make(map[string][]WebSocketMessage),
+		historyMaxSize: 100, // Хранить до 100 последних сообщений
 	}
 }
 
@@ -56,6 +65,9 @@ func (h *Hub) Run() {
 			h.clients[client.parentID][client] = true
 			log.Printf("Client registered: %s, type: %s, parentID: %s", client.userID, client.userType, client.parentID)
 			h.mu.Unlock()
+
+			// Отправляем историю новому клиенту
+			go h.sendMessageHistory(client)
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -86,11 +98,14 @@ func (h *Hub) Run() {
 				}
 			}
 			h.mu.Unlock()
+
+			// Сохраняем сообщение в историю
+			h.saveMessageToHistory(message)
 		}
 	}
 }
 
-// BroadcastChatMessage отправляет сообщение чата всем клиентам семьи
+// BroadcastChatMessage отправляет сообщение чата всем клиентам семьи и сохраняет его в истории
 func (h *Hub) BroadcastChatMessage(chatMessage *models.ChatMessage) {
 	// Подготавливаем сообщение для отправки
 	payload := WebSocketMessage{
@@ -104,6 +119,9 @@ func (h *Hub) BroadcastChatMessage(chatMessage *models.ChatMessage) {
 
 	// Кодируем и отправляем
 	h.broadcast <- payload
+
+	// Дополнительно можно сохранить сообщение в базу данных через отдельный сервис
+	// messageService.SaveMessage(chatMessage)
 }
 
 // BroadcastSystemMessage отправляет системное сообщение
@@ -169,4 +187,71 @@ func (h *Hub) BroadcastScreenTimeLimit(childID string, parentID string, limitDat
 		SenderID: childID,
 	}
 	h.broadcast <- message
+}
+
+// saveMessageToHistory сохраняет сообщение в историю
+func (h *Hub) saveMessageToHistory(message WebSocketMessage) {
+	// Сохраняем только сообщения чата и системные уведомления
+	if message.Type != "chat_message" && !strings.HasPrefix(message.Type, "system_") {
+		return // Игнорируем другие типы сообщений
+	}
+
+	h.messageHistoryMu.Lock()
+	defer h.messageHistoryMu.Unlock()
+
+	// Инициализируем историю для данной семьи, если еще не существует
+	if _, exists := h.messageHistory[message.ParentID]; !exists {
+		h.messageHistory[message.ParentID] = make([]WebSocketMessage, 0, h.historyMaxSize)
+	}
+
+	// Добавляем сообщение в историю
+	history := h.messageHistory[message.ParentID]
+
+	// Если история достигла максимального размера, удаляем самое старое сообщение
+	if len(history) >= h.historyMaxSize {
+		history = history[1:] // Удаляем первый элемент (самое старое сообщение)
+	}
+
+	// Добавляем новое сообщение
+	history = append(history, message)
+	h.messageHistory[message.ParentID] = history
+}
+
+// getMessageHistory возвращает историю сообщений для указанной семьи
+func (h *Hub) getMessageHistory(parentID string) []WebSocketMessage {
+	h.messageHistoryMu.Lock()
+	defer h.messageHistoryMu.Unlock()
+
+	if history, exists := h.messageHistory[parentID]; exists {
+		// Создаем копию слайса, чтобы избежать проблем с конкурентным доступом
+		result := make([]WebSocketMessage, len(history))
+		copy(result, history)
+		return result
+	}
+
+	return make([]WebSocketMessage, 0)
+}
+
+// sendMessageHistory отправляет историю сообщений новому клиенту
+func (h *Hub) sendMessageHistory(client *Client) {
+	history := h.getMessageHistory(client.parentID)
+
+	if len(history) == 0 {
+		return // Нет истории для отправки
+	}
+
+	// Создаем контейнер для истории сообщений
+	historyContainer := WebSocketMessage{
+		Type:     "message_history",
+		ParentID: client.parentID,
+		Message:  history,
+	}
+
+	// Отправляем историю клиенту
+	select {
+	case client.send <- historyContainer:
+		// Успешно отправлено
+	default:
+		// Канал клиента переполнен или закрыт
+	}
 }

@@ -320,23 +320,36 @@ func (s *ChildService) CheckAppBlocking(childFirebaseUID string, appPackage stri
 		currentDayOfWeek = 7
 	}
 
-	// Проверяем каждую временную блокировку
+	// Проверяем каждую временную блокировку для данного приложения
 	for _, block := range timeBlocks {
 		if block.AppPackage == appPackage {
-			// Проверяем, применяется ли блокировка в текущий день недели
-			if strings.Contains(block.DaysOfWeek, strconv.Itoa(currentDayOfWeek)) {
-				// Проверяем, находится ли текущее время в интервале блокировки
-				if isTimeInRange(currentTime, block.StartTime, block.EndTime) {
-					return true, fmt.Sprintf("time blocked until %s", block.EndTime), nil
+			zeroTime := time.Time{}
+			// Проверяем одноразовые блокировки
+			if block.IsOneTime && block.OneTimeEndAt != zeroTime && block.OneTimeEndAt.After(now) {
+				return true, fmt.Sprintf("one time blocked until %s", block.OneTimeEndAt.Format("15:04")), nil
+			}
+
+			// Проверяем регулярные блокировки по времени
+			if !block.IsOneTime && block.DaysOfWeek != "" {
+				// Проверяем, применяется ли блокировка в текущий день недели
+				if strings.Contains(block.DaysOfWeek, strconv.Itoa(currentDayOfWeek)) {
+					// Проверяем, находится ли текущее время в интервале блокировки
+					if isTimeInRange(currentTime, block.StartTime, block.EndTime) {
+						// Добавляем информацию о временном блоке для более информативного ответа
+						blockInfo := fmt.Sprintf("time blocked from %s to %s", block.StartTime, block.EndTime)
+						return true, blockInfo, nil
+					}
 				}
 			}
 		}
 	}
 
+	// Ни одна блокировка не активна
 	return false, "", nil
 }
 
 // isTimeInRange проверяет, входит ли время в указанный интервал
+// Эта функция уже хорошо реализована, оставляем как есть
 func isTimeInRange(current, start, end string) bool {
 	// Парсим время
 	layout := "15:04"
