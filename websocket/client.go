@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -60,21 +61,28 @@ func (c *Client) readPump() {
 	})
 
 	for {
-		var message WebSocketMessage
-		err := c.conn.ReadJSON(&message)
+		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
+				log.Printf("Error reading from WebSocket: %v", err)
 			}
 			break
 		}
 
-		// Обогащаем сообщение данными отправителя
-		message.SenderID = c.userID
-		message.SenderType = c.userType
-		message.ParentID = c.parentID
+		var msg WebSocketMessage
+		// Обработка сообщения
+		err = json.Unmarshal(message, &msg)
+		if err != nil {
+			log.Printf("Error unmarshalling message: %v", err)
+			continue
+		}
 
-		c.hub.broadcast <- message
+		// Обогащаем сообщение данными отправителя
+		msg.SenderID = c.userID
+		msg.SenderType = c.userType
+		msg.ParentID = c.parentID
+
+		c.hub.broadcast <- msg
 	}
 }
 
@@ -111,6 +119,25 @@ func (c *Client) writePump() {
 	}
 }
 
+// ping отправляет ping-сообщения клиенту
+func (c *Client) ping() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := c.conn.WriteControl(
+				websocket.PingMessage,
+				[]byte{},
+				time.Now().Add(10*time.Second)); err != nil {
+				log.Printf("Failed to send ping: %v", err)
+				return
+			}
+		}
+	}
+}
+
 // ServeWs обрабатывает WebSocket запрос от клиента
 func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID, parentID, userType string) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -118,6 +145,16 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID, parentID,
 		log.Println(err)
 		return
 	}
+
+	// При установлении соединения
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	})
+
+	// Установите лимит на размер сообщения
+	conn.SetReadLimit(512 * 1024) // 512KB максимальный размер сообщения
 
 	client := &Client{
 		hub:      hub,
@@ -131,6 +168,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID, parentID,
 	client.hub.register <- client
 
 	// Разрешаем коллекции горутин на сохранение буфера после того, как функция вернется
-	go client.writePump()
-	go client.readPump()
+	go client.writePump() // Отправляет сообщения клиенту
+	go client.readPump()  // Читает сообщения от клиента
+	go client.ping()
 }
