@@ -79,7 +79,7 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 	}
 
 	// Устанавливаем срок действия кода - 24 часа
-	codeExpiresAt := time.Now().Add(30 * time.Second)
+	codeExpiresAt := time.Now().Add(24 * time.Hour)
 
 	parent := models.Parent{
 		Lang:          lang,
