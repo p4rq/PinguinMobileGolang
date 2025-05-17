@@ -35,11 +35,20 @@ func BlockAppsByTime(c *gin.Context) {
 		return
 	}
 
-	// Блокируем приложения на указанное время через Family JSON
-	err := parentService.BlockAppsByTime(parentFirebaseUID.(string), request.ChildID, request.Blocks)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	// Преобразуем запрос для использования с ManageAppTimeRules
+	for _, block := range request.Blocks {
+		err := parentService.ManageAppTimeRules(
+			parentFirebaseUID.(string),
+			request.ChildID,
+			[]string{block.AppPackage},
+			"block",
+			block.StartTime,
+			block.EndTime,
+		)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -58,7 +67,7 @@ func UnblockAppsByTime(c *gin.Context) {
 		return
 	}
 
-	// Получаем FirebaseUID родителя напрямую из контекста (установлен в AuthMiddleware)
+	// Получаем FirebaseUID родителя напрямую из контекста
 	parentFirebaseUID, exists := c.Get("firebase_uid")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: missing firebase_uid"})
@@ -72,8 +81,15 @@ func UnblockAppsByTime(c *gin.Context) {
 		return
 	}
 
-	// Разблокируем приложения через Family JSON
-	err := parentService.UnblockAppsByTime(parentFirebaseUID.(string), request.ChildID, request.Apps)
+	// Используем новый единый метод для разблокировки
+	err := parentService.ManageAppTimeRules(
+		parentFirebaseUID.(string),
+		request.ChildID,
+		request.Apps,
+		"unblock",
+		"", // start_time не требуется для разблокировки
+		"", // end_time не требуется для разблокировки
+	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

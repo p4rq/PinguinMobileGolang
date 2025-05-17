@@ -472,3 +472,46 @@ func (s *ParentService) MonitorChildWithDailyData(firebaseUID string, usageData 
 	// Сохраняем в базу данных
 	return s.ChildRepo.Save(child)
 }
+
+// ManageAppTimeRules обрабатывает как блокировку, так и разблокировку приложений по времени
+func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []string, action string, startTime, endTime string) error {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	// Проверяем, принадлежит ли ребенок родителю
+	if !s.isChildInFamily(parent, childUID) {
+		return errors.New("child does not belong to this parent")
+	}
+
+	if action == "block" {
+		// Создаем записи о временной блокировке
+		var blocks []models.AppTimeBlock
+		for _, app := range apps {
+			block := models.AppTimeBlock{
+				AppPackage: app,
+				StartTime:  startTime,
+				EndTime:    endTime,
+				DaysOfWeek: "1,2,3,4,5,6,7", // По умолчанию все дни недели
+				IsOneTime:  false,
+			}
+			blocks = append(blocks, block)
+		}
+
+		// Сохраняем блокировки
+		return s.ChildRepo.AddTimeBlockedApps(child.ID, blocks)
+	} else if action == "unblock" {
+		// Удаляем блокировки для указанных приложений
+		return s.ChildRepo.RemoveTimeBlockedApps(child.ID, apps)
+	}
+
+	return errors.New("invalid action")
+}

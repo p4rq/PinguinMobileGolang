@@ -331,28 +331,21 @@ func ManageAppTimeRules(c *gin.Context) {
 		return
 	}
 
-	var err error
-	if request.Action == "block" {
-		// Проверка наличия необходимых для блокировки параметров
-		if request.StartTime == "" || request.EndTime == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "start_time and end_time are required for block action"})
-			return
-		}
-
-		err = parentService.BlockAppsByTime(
-			request.ParentFirebaseUID,
-			request.ChildFirebaseUID,
-			request.Apps,
-			request.StartTime,
-			request.EndTime,
-		)
-	} else { // "unblock"
-		err = parentService.UnblockAppsByTime(
-			request.ParentFirebaseUID,
-			request.ChildFirebaseUID,
-			request.Apps,
-		)
+	// Проверка наличия необходимых для блокировки параметров
+	if request.Action == "block" && (request.StartTime == "" || request.EndTime == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start_time and end_time are required for block action"})
+		return
 	}
+
+	// Используем единый метод вместо двух отдельных
+	err := parentService.ManageAppTimeRules(
+		request.ParentFirebaseUID,
+		request.ChildFirebaseUID,
+		request.Apps,
+		request.Action,
+		request.StartTime,
+		request.EndTime,
+	)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
