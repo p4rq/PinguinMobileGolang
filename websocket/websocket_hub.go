@@ -235,12 +235,10 @@ func (h *Hub) saveMessageToHistory(message WebSocketMessage) {
 				// Создаем объект сообщения с правильными именами полей
 				// ВАЖНО: используйте фактические имена полей из models.ChatMessage
 				chatMessage := &models.ChatMessage{
-					ParentID:   message.ParentID,
-					SenderID:   message.SenderID,
-					SenderType: message.SenderType,
-					// Используйте правильные имена полей вашей структуры:
-					Message:   text,       // возможно, у вас это поле называется Content, а не Text
-					CreatedAt: time.Now(), // возможно, у вас это поле называется CreatedAt, а не Timestamp
+					ParentID:  message.ParentID,
+					SenderID:  message.SenderID,
+					Message:   text,
+					CreatedAt: time.Now(),
 					Channel:   message.Channel,
 				}
 
