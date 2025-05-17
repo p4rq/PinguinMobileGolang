@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"strconv"
 	"time"
 
 	"firebase.google.com/go/auth"
@@ -18,6 +17,11 @@ import (
 )
 
 var jwtKey = []byte("your_secret_key")
+
+func init() {
+	// Инициализируем генератор случайных чисел
+	rand.Seed(time.Now().UnixNano())
+}
 
 type Claims struct {
 	Email       string `json:"email"`
@@ -57,9 +61,12 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 	// Generate unique 4-digit code
 	var code string
 	for {
-		code = strconv.Itoa(1000 + rand.Intn(9000))
+		code = fmt.Sprintf("%04d", 1000+rand.Intn(9000)) // Гарантируем формат 4 цифр
 		var count int64
-		s.ParentRepo.CountByCode(code, &count)
+		err := s.ParentRepo.CountByCode(code, &count)
+		if err != nil {
+			return models.Parent{}, "", err
+		}
 		if count == 0 {
 			break
 		}
@@ -70,16 +77,20 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 	if err != nil {
 		return models.Parent{}, "", err
 	}
-	fmt.Printf("Hashed password: %s\n", hashedPassword) // Debugging message
+
+	// Устанавливаем срок действия кода - 24 часа
+	codeExpiresAt := time.Now().Add(30 * time.Second)
+
 	parent := models.Parent{
-		Lang:        lang,
-		Name:        name,
-		Email:       email,
-		Password:    string(hashedPassword),
-		Role:        "parent",
-		Family:      "[]",
-		Code:        code,
-		FirebaseUID: firebaseUid,
+		Lang:          lang,
+		Name:          name,
+		Email:         email,
+		Password:      string(hashedPassword),
+		Role:          "parent",
+		Family:        "[]",
+		Code:          code,
+		CodeExpiresAt: &codeExpiresAt, // Добавляем срок действия кода
+		FirebaseUID:   firebaseUid,
 	}
 
 	if err := s.ParentRepo.Save(parent); err != nil {
@@ -123,7 +134,16 @@ func (s *AuthService) LoginParent(email, password string) (models.Parent, string
 		fmt.Printf("Password comparison error: %v\n", err)
 		return models.Parent{}, "", err
 	}
-
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		// Генерируем новый код
+		updatedParent, err := s.RefreshParentCode(parent.FirebaseUID)
+		if err != nil {
+			// Логируем ошибку, но продолжаем работу
+			fmt.Printf("Failed to refresh parent code: %v", err)
+		} else {
+			parent = updatedParent
+		}
+	}
 	// Generate JWT token with additional fields
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
@@ -147,7 +167,12 @@ func (s *AuthService) LoginParent(email, password string) (models.Parent, string
 func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, string, error) {
 	parent, err := s.ParentRepo.FindByCode(code)
 	if err != nil {
-		return models.Child{}, "", err
+		return models.Child{}, "", errors.New("invalid parent code")
+	}
+
+	// Проверяем срок действия кода родителя
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		return models.Child{}, "", errors.New("parent code has expired")
 	}
 
 	// Register user in Firebase без имени (автоматическое имя)
@@ -166,9 +191,12 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	// Generate unique code for the child
 	var childCode string
 	for {
-		childCode = strconv.Itoa(1000 + rand.Intn(9000))
+		childCode = fmt.Sprintf("%04d", 1000+rand.Intn(9000)) // Гарантируем формат 4 цифр
 		var count int64
-		s.ChildRepo.CountByCode(childCode, &count)
+		err := s.ChildRepo.CountByCode(childCode, &count)
+		if err != nil {
+			return models.Child{}, "", err
+		}
 		if count == 0 {
 			break
 		}
@@ -218,15 +246,23 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	// Generate new unique 4-digit code for the parent
 	var newCode string
 	for {
-		newCode = strconv.Itoa(1000 + rand.Intn(9000))
+		newCode = fmt.Sprintf("%04d", 1000+rand.Intn(9000)) // Гарантируем формат 4 цифр
 		var count int64
-		s.ParentRepo.CountByCode(newCode, &count)
+		err := s.ParentRepo.CountByCode(newCode, &count)
+		if err != nil {
+			return models.Child{}, "", err
+		}
 		if count == 0 {
 			break
 		}
 	}
 	parent.Code = newCode
-	s.ParentRepo.Save(parent)
+	codeExpiresAt := time.Now().Add(24 * time.Hour)
+	parent.CodeExpiresAt = &codeExpiresAt
+
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return models.Child{}, "", err
+	}
 
 	// Generate JWT token with additional fields
 	expirationTime := time.Now().Add(24 * time.Hour)
@@ -301,4 +337,66 @@ func (s *AuthService) VerifyToken(uid string) (interface{}, error) {
 	}
 
 	return nil, errors.New("user not found")
+}
+func (s *AuthService) RefreshParentCode(firebaseUID string) (models.Parent, error) {
+	// Находим родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return models.Parent{}, err
+	}
+
+	// Генерируем новый уникальный код
+	var newCode string
+	for {
+		newCode = fmt.Sprintf("%04d", 1000+rand.Intn(9000))
+		var count int64
+		err := s.ParentRepo.CountByCode(newCode, &count)
+		if err != nil {
+			return models.Parent{}, err
+		}
+		if count == 0 {
+			break
+		}
+	}
+
+	// Устанавливаем новый код со сроком действия 24 часа
+	parent.Code = newCode
+	codeExpiresAt := time.Now().Add(24 * time.Hour)
+	parent.CodeExpiresAt = &codeExpiresAt
+
+	// Сохраняем изменения
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return models.Parent{}, err
+	}
+
+	return parent, nil
+}
+func (s *AuthService) IsParentCodeValid(code string) (bool, error) {
+	parent, err := s.ParentRepo.FindByCode(code)
+	if err != nil {
+		return false, err
+	}
+
+	// Проверяем срок действия кода
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		return false, nil
+	}
+
+	return true, nil
+}
+func (s *AuthService) EnsureValidParentCode(firebaseUID string) (models.Parent, error) {
+	// Находим родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return models.Parent{}, err
+	}
+
+	// Проверяем, истек ли срок действия кода
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		// Код истек, обновляем его
+		return s.RefreshParentCode(firebaseUID)
+	}
+
+	// Код действителен, возвращаем родителя без изменений
+	return parent, nil
 }
