@@ -5,7 +5,9 @@ import (
 	"PinguinMobile/repositories"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -353,4 +355,40 @@ func (s *ChatService) GetChannelsList(parentID, userID string) ([]string, error)
 	}
 
 	return s.ChatRepo.GetChannelsList(parentID)
+}
+
+// GetMessages получает сообщения для семейного чата
+func (s *ChatService) GetMessages(parentID string, userID string, limit int) ([]*models.ChatMessage, error) {
+	// Проверяем доступ пользователя к этой семье
+	if userID != parentID {
+		inFamily, err := s.IsChildInFamily(userID, parentID)
+		if err != nil {
+			return nil, err
+		}
+		if !inFamily {
+			return nil, errors.New("unauthorized: user not in this family")
+		}
+	}
+
+	// Проверка существования семьи через ParentRepo
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentID)
+	if err != nil {
+		log.Printf("Parent not found: %v", err)
+		return nil, fmt.Errorf("parent not found: %w", err)
+	}
+
+	// Используем ChatRepo для получения сообщений
+	chatMessages, err := s.ChatRepo.GetFamilyMessages(parent.FirebaseUID, "", limit, 0)
+	if err != nil {
+		log.Printf("Error getting family messages: %v", err)
+		return nil, err
+	}
+
+	// Преобразуем в нужный формат возврата
+	messages := make([]*models.ChatMessage, len(chatMessages))
+	for i := range chatMessages {
+		messages[i] = &chatMessages[i]
+	}
+
+	return messages, nil
 }

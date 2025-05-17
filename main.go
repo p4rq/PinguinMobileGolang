@@ -27,7 +27,7 @@ func (a *ChatServiceAdapter) SaveMessage(message *models.ChatMessage) error {
 }
 
 // GetMessages реализует интерфейс ChatMessageService для получения сообщений
-func (a *ChatServiceAdapter) GetMessages(parentID string, limit int) ([]*models.ChatMessage, error) {
+func (a *ChatServiceAdapter) GetMessages(parentID string, userID string, limit int) ([]*models.ChatMessage, error) {
 
 	messages, err := a.chatService.GetFamilyMessages("", parentID, "", limit, 0)
 	if err != nil {

@@ -62,7 +62,7 @@ type Hub struct {
 // ChatMessageService интерфейс для работы с сообщениями чата
 type ChatMessageService interface {
 	SaveMessage(message *models.ChatMessage) error
-	GetMessages(parentID string, limit int) ([]*models.ChatMessage, error)
+	GetMessages(parentID string, userID string, limit int) ([]*models.ChatMessage, error)
 }
 
 // NewHub создает новый хаб
@@ -359,7 +359,7 @@ func (h *Hub) getMessageHistory(parentID string) []map[string]interface{} {
 
 // Упрощенная отправка истории
 func (h *Hub) sendMessageHistory(client *Client) {
-	log.Printf("Getting message history for parent_id: %s", client.parentID)
+	log.Printf("Getting message history for parent_id: %s, user_id: %s", client.parentID, client.userID)
 
 	// Проверяем сначала кэш в памяти
 	cachedHistory := h.getMessageHistory(client.parentID)
@@ -380,11 +380,11 @@ func (h *Hub) sendMessageHistory(client *Client) {
 	var err error
 
 	if h.messageService != nil {
-		log.Printf("Loading messages from DB for parent_id: %s", client.parentID)
-		messages, err = h.messageService.GetMessages(client.parentID, 30)
+		log.Printf("Loading messages from DB for parent_id: %s, user_id: %s", client.parentID, client.userID)
+		messages, err = h.messageService.GetMessages(client.parentID, client.userID, 30)
 		if err != nil {
 			log.Printf("Error loading messages from DB: %v", err)
-			// Отправляем пустой массив и ошибку
+			// Отправляем пустой массив при ошибке
 			client.send <- WebSocketMessage{
 				Type:     "message_history",
 				ParentID: client.parentID,
@@ -396,7 +396,7 @@ func (h *Hub) sendMessageHistory(client *Client) {
 
 	log.Printf("Found %d messages in DB for parent_id: %s", len(messages), client.parentID)
 
-	// Даже если нет сообщений, отправляем пустой массив
+	// Преобразуем сообщения в нужный формат
 	simpleHistory := make([]map[string]interface{}, len(messages))
 	for i, msg := range messages {
 		simpleHistory[i] = map[string]interface{}{
