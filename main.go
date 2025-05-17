@@ -28,16 +28,36 @@ func (a *ChatServiceAdapter) SaveMessage(message *models.ChatMessage) error {
 
 // GetMessages реализует интерфейс ChatMessageService для получения сообщений
 func (a *ChatServiceAdapter) GetMessages(parentID string, userID string, limit int) ([]*models.ChatMessage, error) {
+	log.Printf("ChatServiceAdapter.GetMessages: parentID=%s, userID=%s", parentID, userID)
 
-	messages, err := a.chatService.GetFamilyMessages("", parentID, "", limit, 0)
+	// Если пользователь - родитель своей семьи, то у него всегда есть доступ
+	if userID == parentID {
+		log.Printf("User is parent of family, access granted")
+		// Используем parentID как userID, чтобы пропустить проверку авторизации
+		msgs, err := a.chatService.GetFamilyMessages(parentID, parentID, "", limit, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		// Преобразуем []models.ChatMessage в []*models.ChatMessage
+		result := make([]*models.ChatMessage, len(msgs))
+		for i := range msgs {
+			result[i] = &msgs[i]
+		}
+		return result, nil
+	}
+
+	// Для остальных пользователей проверяем принадлежность к семье
+	msgs, err := a.chatService.GetFamilyMessages(userID, parentID, "", limit, 0)
 	if err != nil {
+		log.Printf("Error in GetFamilyMessages: %v", err)
 		return nil, err
 	}
 
 	// Преобразуем []models.ChatMessage в []*models.ChatMessage
-	result := make([]*models.ChatMessage, len(messages))
-	for i := range messages {
-		result[i] = &messages[i]
+	result := make([]*models.ChatMessage, len(msgs))
+	for i := range msgs {
+		result[i] = &msgs[i]
 	}
 
 	return result, nil

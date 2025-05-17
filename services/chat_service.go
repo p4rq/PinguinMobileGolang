@@ -220,26 +220,29 @@ func (s *ChatService) SendMediaMessage(
 
 // GetFamilyMessages получает список сообщений для семьи с фильтром по каналу
 func (s *ChatService) GetFamilyMessages(userID, parentID, channel string, limit, offset int) ([]models.ChatMessage, error) {
-	// Проверка, что запрашивающий пользователь имеет доступ к этой семье
+	log.Printf("ChatService.GetFamilyMessages: userID=%s, parentID=%s", userID, parentID)
+
+	// Если пользователь - родитель своей семьи, то разрешаем доступ без проверки
 	if userID == parentID {
-		// Если запрашивает родитель-владелец семьи - все нормально
-	} else {
-		// Если запрашивает ребенок, проверяем принадлежность к семье
-		inFamily, err := s.IsChildInFamily(userID, parentID)
-		if err != nil {
-			return nil, err
-		}
-		if !inFamily {
-			return nil, errors.New("unauthorized: user not in this family")
-		}
+		log.Printf("User is parent, skipping authorization check")
+		// Просто получаем сообщения
+		return s.ChatRepo.GetFamilyMessages(parentID, channel, limit, offset)
 	}
 
-	messages, err := s.ChatRepo.GetFamilyMessages(parentID, channel, limit, offset)
+	// Для детей проверяем принадлежность к семье
+	inFamily, err := s.IsChildInFamily(userID, parentID)
 	if err != nil {
+		log.Printf("Error checking if child in family: %v", err)
 		return nil, err
 	}
 
-	return messages, nil
+	if !inFamily {
+		log.Printf("User %s is not in family %s", userID, parentID)
+		return nil, errors.New("unauthorized: user not in this family")
+	}
+
+	// После проверки получаем сообщения
+	return s.ChatRepo.GetFamilyMessages(parentID, channel, limit, offset)
 }
 
 // GetPrivateMessages получает список личных сообщений между двумя пользователями

@@ -32,18 +32,12 @@ var upgrader = websocket.Upgrader{
 
 // Client представляет собой соединение WebSocket
 type Client struct {
-	hub *Hub
-
-	// WebSocket соединение
-	conn *websocket.Conn
-
-	// Буферизованный канал для исходящих сообщений
-	send chan WebSocketMessage
-
-	// Идентификаторы для маршрутизации сообщений
-	userID   string
-	parentID string
-	userType string
+	hub      *Hub
+	conn     *websocket.Conn
+	send     chan WebSocketMessage
+	userID   string // ID пользователя (firebase_uid)
+	parentID string // ID семьи
+	userType string // тип пользователя (parent/child)
 }
 
 // readPump обрабатывает входящие сообщения от клиента
