@@ -531,28 +531,56 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 		// Сохраняем обновленный список блоков
 		return s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
 	} else if action == "unblock" && len(blockIDs) > 0 {
-		// Здесь должна быть логика удаления блоков по ID
-		fmt.Printf("Attempting to unblock by IDs: %v", blockIDs) // Добавьте логирование
-
 		// Получение существующих блоков
 		existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
 		if err != nil {
 			return err
 		}
 
-		// Создание карты ID для быстрой проверки
-		idsToRemove := make(map[int64]bool)
+		// Находим блоки, соответствующие указанным ID
+		var blocksToRemove []models.AppTimeBlock
 		for _, id := range blockIDs {
-			idsToRemove[id] = true
+			for _, block := range existingBlocks {
+				if block.ID == id {
+					blocksToRemove = append(blocksToRemove, block)
+					break
+				}
+			}
 		}
 
-		// Фильтрация блоков - оставляем только те, которых нет в списке на удаление
+		// Теперь ищем все блоки, которые принадлежат к тем же группам
+		var groupKeysToRemove []string
+		for _, blockToRemove := range blocksToRemove {
+			// Создаем ключ группы
+			groupKey := fmt.Sprintf("%s_%s_%s_%s",
+				blockToRemove.StartTime,
+				blockToRemove.EndTime,
+				blockToRemove.BlockName,
+				blockToRemove.DaysOfWeek)
+			groupKeysToRemove = append(groupKeysToRemove, groupKey)
+		}
+
+		// Фильтрация блоков - оставляем только те, которых нет в списке удаления
 		var updatedBlocks []models.AppTimeBlock
 		for _, block := range existingBlocks {
-			if !idsToRemove[block.ID] {
+			shouldKeep := true
+
+			// Проверяем, принадлежит ли блок к группе, которую нужно удалить
+			groupKey := fmt.Sprintf("%s_%s_%s_%s",
+				block.StartTime,
+				block.EndTime,
+				block.BlockName,
+				block.DaysOfWeek)
+
+			for _, keyToRemove := range groupKeysToRemove {
+				if keyToRemove == groupKey {
+					shouldKeep = false
+					break
+				}
+			}
+
+			if shouldKeep {
 				updatedBlocks = append(updatedBlocks, block)
-			} else {
-				fmt.Printf("Removing block with ID: %d, App: %s", block.ID, block.AppPackage) // Логирование
 			}
 		}
 
