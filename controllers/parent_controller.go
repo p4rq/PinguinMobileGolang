@@ -363,7 +363,8 @@ func ManageAppTimeRules(c *gin.Context) {
 						request.Action,
 						timeBlock.StartTime,
 						timeBlock.EndTime,
-						blockID, // Передаем ID в метод
+						timeBlock.BlockName, // Добавляем название блока
+						blockID,             // Передаем ID в метод
 					)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -441,6 +442,7 @@ func ManageAppTimeRules(c *gin.Context) {
 				request.Action,
 				request.StartTime,
 				request.EndTime,
+				"",
 				blockID, // Передаем ID в метод
 			)
 
@@ -509,6 +511,7 @@ func ManageAppTimeRules(c *gin.Context) {
 				request.Action,
 				"", // Для разблокировки время не нужно
 				"", // Для разблокировки время не нужно
+				"", // Для разблокировки по ID
 				request.BlockIDs...,
 			)
 
@@ -529,6 +532,7 @@ func ManageAppTimeRules(c *gin.Context) {
 			request.Action,
 			"", // Для разблокировки время не нужно
 			"", // Для разблокировки время не нужно,
+			"", // Добавляем пустое название блока
 		)
 
 		if err != nil {

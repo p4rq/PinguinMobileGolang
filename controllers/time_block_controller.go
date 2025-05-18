@@ -49,6 +49,7 @@ func BlockAppsByTime(c *gin.Context) {
 				"block",
 				timeBlock.StartTime,
 				timeBlock.EndTime,
+				"",
 			)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -95,6 +96,7 @@ func UnblockAppsByTime(c *gin.Context) {
 		"unblock",
 		"", // start_time не требуется для разблокировки
 		"", // end_time не требуется для разблокировки
+		"",
 	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
