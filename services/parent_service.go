@@ -427,6 +427,49 @@ func (s *ParentService) CancelOneTimeBlocks(parentFirebaseUID, childFirebaseUID 
 	return nil
 }
 
+// CancelOneTimeBlocksByIDs отменяет одноразовые блокировки по их ID
+func (s *ParentService) CancelOneTimeBlocksByIDs(parentUID, childUID string, blockIDs []int64) error {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentUID)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childUID)
+	if err != nil {
+		return errors.New("child not found")
+	}
+
+	// Проверяем, принадлежит ли ребенок родителю
+	if !s.isChildInFamily(parent, childUID) {
+		return errors.New("child does not belong to this parent")
+	}
+
+	// Получаем текущие блоки
+	existingBlocks, err := s.GetOneTimeBlocksFromDB(child.ID)
+	if err != nil {
+		return err
+	}
+
+	// Создаем карту ID для быстрой проверки
+	idsToRemove := make(map[int64]bool)
+	for _, id := range blockIDs {
+		idsToRemove[id] = true
+	}
+
+	// Фильтруем блоки - оставляем только те, которых нет в списке удаления
+	var updatedBlocks []models.AppTimeBlock
+	for _, block := range existingBlocks {
+		if !idsToRemove[block.ID] {
+			updatedBlocks = append(updatedBlocks, block)
+		}
+	}
+
+	// Сохраняем обновленный список
+	return s.SaveOneTimeBlocksToDB(child.ID, updatedBlocks)
+}
+
 // formatDuration форматирует продолжительность в часах в человекочитаемый формат
 func formatDuration(hours float64) string {
 	if hours < 1 {
@@ -641,4 +684,54 @@ func (s *ParentService) BlockAppsWithMultipleTimeRanges(
 
 	// Сохраняем блокировки
 	return s.ChildRepo.AddTimeBlockedApps(child.ID, blocks)
+}
+
+// GetOneTimeBlocksFromDB получает одноразовые блокировки из базы данных
+func (s *ParentService) GetOneTimeBlocksFromDB(childID uint) ([]models.AppTimeBlock, error) {
+	// Получаем все временные блокировки
+	allBlocks, err := s.ChildRepo.GetTimeBlockedApps(childID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Фильтруем только одноразовые блокировки
+	var oneTimeBlocks []models.AppTimeBlock
+	for _, block := range allBlocks {
+		if block.IsOneTime {
+			oneTimeBlocks = append(oneTimeBlocks, block)
+		}
+	}
+
+	return oneTimeBlocks, nil
+}
+
+// SaveOneTimeBlocksToDB сохраняет одноразовые блокировки в базу данных
+func (s *ParentService) SaveOneTimeBlocksToDB(childID uint, blocks []models.AppTimeBlock) error {
+	// Получаем все временные блокировки
+	allBlocks, err := s.ChildRepo.GetTimeBlockedApps(childID)
+	if err != nil {
+		return err
+	}
+
+	// Фильтруем, оставляя только не-одноразовые блокировки
+	var regularBlocks []models.AppTimeBlock
+	for _, block := range allBlocks {
+		if !block.IsOneTime {
+			regularBlocks = append(regularBlocks, block)
+		}
+	}
+
+	// Объединяем регулярные блокировки и новые одноразовые блокировки
+	updatedBlocks := append(regularBlocks, blocks...)
+
+	// Удаляем все текущие блокировки и добавляем обновленные
+	if err := s.ChildRepo.RemoveAllTimeBlockedApps(childID); err != nil {
+		return err
+	}
+
+	if len(updatedBlocks) > 0 {
+		return s.ChildRepo.AddTimeBlockedApps(childID, updatedBlocks)
+	}
+
+	return nil
 }
