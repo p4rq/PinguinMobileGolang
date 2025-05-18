@@ -255,6 +255,7 @@ func UnblockApps(c *gin.Context) {
 
 // BlockAppsTempOnce обрабатывает запрос на одноразовую временную блокировку приложений
 func BlockAppsTempOnce(c *gin.Context) {
+
 	var request services.TempBlockRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

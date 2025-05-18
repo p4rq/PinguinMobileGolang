@@ -294,6 +294,11 @@ type TempBlockRequest struct {
 
 // BlockAppsTempOnce блокирует приложения одноразово на указанное количество минут
 func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request TempBlockRequest) ([]models.AppTimeBlock, error) {
+	// Проверка на корректность значения duration_mins
+	if request.DurationMins <= 0 {
+		return nil, errors.New("duration_mins must be greater than 0")
+	}
+
 	// Получаем родителя
 	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
 	if err != nil {
