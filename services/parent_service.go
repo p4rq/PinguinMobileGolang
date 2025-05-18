@@ -317,14 +317,34 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	startTimeStr := now.Format("15:04")
 	endTimeStr := endTime.Format("15:04")
 
-	// Создаем новые блоки для одноразовой блокировки
+	// Получаем существующие блокировки
+	existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Создаем карту существующих одноразовых блокировок
+	existingOneTimeApps := make(map[string]bool)
+	for _, block := range existingBlocks {
+		if block.IsOneTime {
+			existingOneTimeApps[block.AppPackage] = true
+		}
+	}
+
+	// Создаем новые блоки для одноразовой блокировки только для тех приложений,
+	// которые еще не заблокированы
 	var newBlocks []models.AppTimeBlock
 	for _, appPackage := range request.AppPackages {
+		// Пропускаем приложения, которые уже имеют одноразовую блокировку
+		if existingOneTimeApps[appPackage] {
+			continue
+		}
+
 		block := models.AppTimeBlock{
 			ID:           time.Now().UnixNano(), // Генерируем ID
 			AppPackage:   appPackage,
-			StartTime:    startTimeStr, // Текущее время как начало блокировки
-			EndTime:      endTimeStr,   // Рассчитанное время окончания
+			StartTime:    startTimeStr,
+			EndTime:      endTimeStr,
 			DaysOfWeek:   "1,2,3,4,5,6,7",
 			IsOneTime:    true,
 			OneTimeEndAt: endTime,
@@ -333,8 +353,14 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 		newBlocks = append(newBlocks, block)
 	}
 
+	// Если нет новых блоков для добавления, возвращаем пустой массив
+	if len(newBlocks) == 0 {
+		return []models.AppTimeBlock{}, nil
+	}
+
+	// Далее оставляем существующий код для сохранения блоков...
 	// Получаем существующие блокировки
-	existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	existingBlocks, err = s.ChildRepo.GetTimeBlockedApps(child.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -577,6 +603,15 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 			return err
 		}
 
+		// Создаем карту существующих блокировок, чтобы избежать дублирования
+		existingBlockMap := make(map[string]bool)
+		for _, block := range existingBlocks {
+			if !block.IsOneTime { // Проверяем только регулярные блоки
+				key := fmt.Sprintf("%s_%s_%s", block.AppPackage, block.StartTime, block.EndTime)
+				existingBlockMap[key] = true
+			}
+		}
+
 		// Создаем записи о временной блокировке
 		var newBlocks []models.AppTimeBlock
 
@@ -589,18 +624,27 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 		}
 
 		for _, app := range apps {
-			block := models.AppTimeBlock{
-				ID:         blockID, // Устанавливаем ID
-				AppPackage: app,
-				StartTime:  startTime,
-				EndTime:    endTime,
-				DaysOfWeek: "1,2,3,4,5,6,7", // По умолчанию все дни недели
-				IsOneTime:  false,
-			}
-			newBlocks = append(newBlocks, block)
+			// Проверяем, существует ли уже такая блокировка
+			key := fmt.Sprintf("%s_%s_%s", app, startTime, endTime)
+			if !existingBlockMap[key] {
+				block := models.AppTimeBlock{
+					ID:         blockID, // Устанавливаем ID
+					AppPackage: app,
+					StartTime:  startTime,
+					EndTime:    endTime,
+					DaysOfWeek: "1,2,3,4,5,6,7", // По умолчанию все дни недели
+					IsOneTime:  false,
+				}
+				newBlocks = append(newBlocks, block)
 
-			// Увеличиваем ID для следующего блока, если нужно создать несколько
-			blockID++
+				// Увеличиваем ID для следующего блока
+				blockID++
+			}
+		}
+
+		// Если нет новых блоков для добавления, возвращаем успех
+		if len(newBlocks) == 0 {
+			return nil
 		}
 
 		// Объединяем существующие и новые блоки
@@ -608,7 +652,7 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 
 		// Сохраняем обновленный список блоков
 		return s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
-	} else if action == "unblock" && len(blockIDs) > 0 {
+	} else if action == "unblock" {
 		// Получение существующих блоков
 		existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
 		if err != nil {
