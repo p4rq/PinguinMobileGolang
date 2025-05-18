@@ -5,6 +5,7 @@ import (
 	"PinguinMobile/services"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -278,19 +279,64 @@ func BlockAppsTempOnce(c *gin.Context) {
 
 // GetOneTimeBlocks возвращает список одноразовых блокировок для ребенка
 func GetOneTimeBlocks(c *gin.Context) {
-	parentFirebaseUID := c.Param("firebase_uid")
-	childFirebaseUID := c.Param("child_id")
+	// Получаем ID ребенка из запроса (как параметр URL)
+	childID := c.Param("firebase_uid")
+	if childID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "child ID is required"})
+		return
+	}
 
-	blocks, err := parentService.GetOneTimeBlocks(parentFirebaseUID, childFirebaseUID)
+	// Получаем FirebaseUID родителя напрямую из контекста
+	parentFirebaseUID, exists := c.Get("firebase_uid")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: missing firebase_uid"})
+		return
+	}
+
+	// Получаем одноразовые блокировки
+	oneTimeBlocks, err := parentService.GetOneTimeBlocks(parentFirebaseUID.(string), childID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"blocks": blocks,
-	})
+	now := time.Now()
+
+	// Группируем блоки по времени окончания
+	groupedBlocks := make(map[string]map[string]interface{})
+
+	for _, block := range oneTimeBlocks {
+		// Создаем ключ для группировки по времени окончания
+		key := block.OneTimeEndAt.Format(time.RFC3339)
+
+		// Вычисляем оставшееся время в минутах
+		remainingMin := int(math.Max(0, block.OneTimeEndAt.Sub(now).Minutes()))
+
+		if group, exists := groupedBlocks[key]; exists {
+			// Добавляем приложение в существующую группу
+			apps := group["apps"].([]string)
+			apps = append(apps, block.AppPackage)
+			group["apps"] = apps
+		} else {
+			// Создаем новую группу
+			groupedBlocks[key] = map[string]interface{}{
+				"id":            block.ID,
+				"end_time":      block.OneTimeEndAt,
+				"remaining_min": remainingMin, // Оставшееся время в минутах
+				"apps":          []string{block.AppPackage},
+				"duration":      block.Duration,
+				"is_one_time":   true,
+			}
+		}
+	}
+
+	// Преобразуем в массив для возврата
+	var result []map[string]interface{}
+	for _, group := range groupedBlocks {
+		result = append(result, group)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"blocks": result})
 }
 
 // CancelOneTimeBlocks отменяет одноразовые блокировки для указанных приложений

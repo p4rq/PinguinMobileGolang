@@ -416,15 +416,17 @@ func (s *ParentService) GetOneTimeBlocks(parentFirebaseUID, childFirebaseUID str
 		return nil, errors.New("child does not belong to this parent")
 	}
 
-	// Получаем все временные блокировки
+	// Получаем все блокировки
 	allBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Фильтруем только одноразовые блокировки, которые еще активны
-	var oneTimeBlocks []models.AppTimeBlock
+	// Текущее время для проверки активных блокировок
 	now := time.Now()
+
+	// Фильтруем только активные одноразовые блокировки
+	var oneTimeBlocks []models.AppTimeBlock
 	for _, block := range allBlocks {
 		if block.IsOneTime && block.OneTimeEndAt.After(now) {
 			oneTimeBlocks = append(oneTimeBlocks, block)

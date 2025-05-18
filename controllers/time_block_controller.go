@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"PinguinMobile/models"
 	"fmt"
 	"net/http"
 	"time"
@@ -106,7 +107,7 @@ func UnblockAppsByTime(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// GetTimeBlockedApps возвращает список временных блокировок
+// GetTimeBlockedApps возвращает список временных блокировок по расписанию (не одноразовых)
 func GetTimeBlockedApps(c *gin.Context) {
 	// Получаем ID ребенка из запроса
 	childID := c.Param("firebase_uid")
@@ -136,10 +137,18 @@ func GetTimeBlockedApps(c *gin.Context) {
 		return
 	}
 
+	// Фильтруем, оставляя только регулярные блокировки (не одноразовые)
+	var regularBlocks []models.AppTimeBlock
+	for _, block := range blocks {
+		if !block.IsOneTime {
+			regularBlocks = append(regularBlocks, block)
+		}
+	}
+
 	// Группируем блоки по временным интервалам
 	groupedBlocks := make(map[string]map[string]interface{})
 
-	for _, block := range blocks {
+	for _, block := range regularBlocks {
 		// Создаем ключ для группировки по времени
 		key := fmt.Sprintf("%s_%s_%s_%s", block.StartTime, block.EndTime, block.BlockName, block.DaysOfWeek)
 
@@ -157,7 +166,7 @@ func GetTimeBlockedApps(c *gin.Context) {
 				"block_name":   block.BlockName,
 				"days_of_week": block.DaysOfWeek,
 				"apps":         []string{block.AppPackage},
-				"is_one_time":  block.IsOneTime,
+				"is_one_time":  false, // Явно указываем, что это не одноразовая блокировка
 			}
 		}
 	}
