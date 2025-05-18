@@ -381,9 +381,44 @@ func ManageAppTimeRules(c *gin.Context) {
 				}
 			}
 
+			// ИСПРАВЛЕНО: Группируем блоки для нового формата так же, как для старого
+			groupedBlocks := make(map[string]map[string]interface{})
+
+			for _, block := range createdBlocks {
+				// Создаем ключ для группировки
+				key := fmt.Sprintf("%s_%s_%s_%s",
+					block["start_time"],
+					block["end_time"],
+					block["block_name"],
+					block["days_of_week"])
+
+				if group, exists := groupedBlocks[key]; exists {
+					// Добавляем приложение в существующую группу
+					apps := group["apps"].([]string)
+					apps = append(apps, block["app_package"].(string))
+					group["apps"] = apps
+				} else {
+					// Создаем новую группу
+					groupedBlocks[key] = map[string]interface{}{
+						"id":           block["id"],
+						"start_time":   block["start_time"],
+						"end_time":     block["end_time"],
+						"block_name":   block["block_name"],
+						"days_of_week": block["days_of_week"],
+						"apps":         []string{block["app_package"].(string)},
+					}
+				}
+			}
+
+			// Преобразуем в массив для ответа
+			var groupedResult []map[string]interface{}
+			for _, group := range groupedBlocks {
+				groupedResult = append(groupedResult, group)
+			}
+
 			c.JSON(http.StatusOK, gin.H{
 				"message": "Apps blocked by time successfully",
-				"blocks":  createdBlocks,
+				"blocks":  groupedResult,
 			})
 			return
 		}
@@ -428,7 +463,11 @@ func ManageAppTimeRules(c *gin.Context) {
 
 		for _, block := range createdBlocks {
 			// Создаем ключ для группировки
-			key := fmt.Sprintf("%s_%s_%s", block["start_time"], block["end_time"], block["block_name"])
+			key := fmt.Sprintf("%s_%s_%s_%s",
+				block["start_time"],
+				block["end_time"],
+				block["block_name"],
+				block["days_of_week"])
 
 			if group, exists := groupedBlocks[key]; exists {
 				// Добавляем приложение в существующую группу
@@ -449,14 +488,14 @@ func ManageAppTimeRules(c *gin.Context) {
 		}
 
 		// Преобразуем в массив для ответа
-		var result []map[string]interface{}
+		var groupedResult []map[string]interface{}
 		for _, group := range groupedBlocks {
-			result = append(result, group)
+			groupedResult = append(groupedResult, group)
 		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Apps blocked by time successfully",
-			"blocks":  result,
+			"blocks":  groupedResult,
 		})
 	} else if request.Action == "unblock" {
 		// Проверяем, есть ли ID блоков для разблокировки
