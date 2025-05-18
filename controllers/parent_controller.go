@@ -676,26 +676,45 @@ func ManageOneTimeRules(c *gin.Context) {
 			})
 		}
 	} else if request.Action == "unblock" {
-		if len(request.BlockIDs) == 0 {
+		if len(request.BlockIDs) > 0 {
+			// Если указаны конкретные приложения, отменяем блокировки только для них
+			if len(request.Apps) > 0 {
+				err := parentService.CancelOneTimeBlocks(
+					request.ParentFirebaseUID,
+					request.ChildFirebaseUID,
+					request.Apps,
+				)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"status":  "success",
+					"message": "One-time blocks successfully canceled for specified apps",
+				})
+				return
+			}
+
+			// Отменяем все одноразовые блокировки, связанные с указанными ID блоков
+			err := parentService.CancelOneTimeBlocksByIDs(
+				request.ParentFirebaseUID,
+				request.ChildFirebaseUID,
+				request.BlockIDs,
+			)
+
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "success",
+				"message": "One-time blocks successfully canceled",
+			})
+		} else {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "block_ids are required for unblock action"})
-			return
 		}
-
-		// Отменяем одноразовые блокировки по ID
-		err := parentService.CancelOneTimeBlocksByIDs(
-			request.ParentFirebaseUID,
-			request.ChildFirebaseUID,
-			request.BlockIDs,
-		)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "success",
-			"message": "One-time blocks successfully canceled",
-		})
 	}
 }

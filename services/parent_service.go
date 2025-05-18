@@ -513,7 +513,7 @@ func (s *ParentService) CancelOneTimeBlocksByIDs(parentUID, childUID string, blo
 	}
 
 	// Получаем текущие блоки
-	existingBlocks, err := s.GetOneTimeBlocksFromDB(child.ID)
+	existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
 	if err != nil {
 		return err
 	}
@@ -522,6 +522,27 @@ func (s *ParentService) CancelOneTimeBlocksByIDs(parentUID, childUID string, blo
 	idsToRemove := make(map[int64]bool)
 	for _, id := range blockIDs {
 		idsToRemove[id] = true
+	}
+
+	// Соберем группы блоков с одинаковыми временами окончания
+	blockGroups := make(map[string][]int64)
+
+	// Сначала определим все группы блокировок
+	for _, block := range existingBlocks {
+		if idsToRemove[block.ID] {
+			// Используем время окончания как ключ группы
+			key := block.OneTimeEndAt.Format(time.RFC3339)
+			blockGroups[key] = append(blockGroups[key], block.ID)
+		}
+	}
+
+	// Обновляем карту idsToRemove, добавляя в неё все ID из тех же групп
+	for _, block := range existingBlocks {
+		key := block.OneTimeEndAt.Format(time.RFC3339)
+		if _, exists := blockGroups[key]; exists {
+			// Если блок принадлежит группе, которую мы удаляем
+			idsToRemove[block.ID] = true
+		}
 	}
 
 	// Фильтруем блоки - оставляем только те, которых нет в списке удаления
