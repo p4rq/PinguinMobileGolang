@@ -293,10 +293,11 @@ type TempBlockRequest struct {
 }
 
 // BlockAppsTempOnce блокирует приложения одноразово на указанное количество минут
+// Если DurationMins = 0, блокирует навсегда
 func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request TempBlockRequest) ([]models.AppTimeBlock, error) {
 	// Проверка на корректность значения duration_mins
-	if request.DurationMins <= 0 {
-		return nil, errors.New("duration_mins must be greater than 0")
+	if request.DurationMins < 0 {
+		return nil, errors.New("duration_mins must be greater than or equal to 0")
 	}
 
 	// Получаем родителя
@@ -316,9 +317,22 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 		return nil, errors.New("child does not belong to this parent")
 	}
 
-	// Вычисляем время окончания блокировки (теперь используем минуты)
+	// Вычисляем время окончания блокировки
 	now := time.Now()
-	endTime := now.Add(time.Duration(request.DurationMins) * time.Minute)
+	var endTime time.Time
+	var durationText string
+	var isOneTime bool
+
+	if request.DurationMins == 0 {
+		// Для постоянной блокировки устанавливаем очень далекую дату
+		endTime = now.AddDate(100, 0, 0) // 100 лет вперед
+		durationText = "Постоянная блокировка"
+		isOneTime = true // Это не одноразовая, а постоянная блокировка
+	} else {
+		endTime = now.Add(time.Duration(request.DurationMins) * time.Minute)
+		durationText = formatDuration(request.DurationMins)
+		isOneTime = true // Это одноразовая блокировка
+	}
 
 	// Установить более осмысленные значения для StartTime и EndTime
 	startTimeStr := now.Format("15:04")
@@ -331,19 +345,18 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	}
 
 	// Создаем карту существующих одноразовых блокировок
-	existingOneTimeApps := make(map[string]bool)
+	existingBlockedApps := make(map[string]bool)
 	for _, block := range existingBlocks {
-		if block.IsOneTime {
-			existingOneTimeApps[block.AppPackage] = true
+		if block.IsOneTime == isOneTime {
+			existingBlockedApps[block.AppPackage] = true
 		}
 	}
 
-	// Создаем новые блоки для одноразовой блокировки только для тех приложений,
-	// которые еще не заблокированы
+	// Создаем новые блоки для блокировки
 	var newBlocks []models.AppTimeBlock
 	for _, appPackage := range request.AppPackages {
-		// Пропускаем приложения, которые уже имеют одноразовую блокировку
-		if existingOneTimeApps[appPackage] {
+		// Пропускаем приложения, которые уже имеют соответствующую блокировку
+		if existingBlockedApps[appPackage] {
 			continue
 		}
 
@@ -353,10 +366,10 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 			StartTime:    startTimeStr,
 			EndTime:      endTimeStr,
 			DaysOfWeek:   "1,2,3,4,5,6,7",
-			IsOneTime:    true,
+			IsOneTime:    isOneTime,
 			OneTimeEndAt: endTime,
-			Duration:     formatDuration(request.DurationMins), // Используем минуты
-			BlockName:    request.BlockName,                    // Добавляем название блока
+			Duration:     durationText,
+			BlockName:    request.BlockName,
 		}
 		newBlocks = append(newBlocks, block)
 	}
@@ -854,4 +867,40 @@ func (s *ParentService) SaveOneTimeBlocksToDB(childID uint, blocks []models.AppT
 	}
 
 	return nil
+}
+
+// GetPermanentBlocks возвращает список постоянных блокировок для ребенка
+func (s *ParentService) GetPermanentBlocks(parentFirebaseUID, childFirebaseUID string) ([]models.AppTimeBlock, error) {
+	// Получаем родителя
+	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
+	if err != nil {
+		return nil, errors.New("parent not found")
+	}
+
+	// Получаем ребенка
+	child, err := s.ChildRepo.FindByFirebaseUID(childFirebaseUID)
+	if err != nil {
+		return nil, errors.New("child not found")
+	}
+
+	// Проверяем связь родитель-ребенок через Family JSON
+	if !s.isChildInFamily(parent, childFirebaseUID) {
+		return nil, errors.New("child does not belong to this parent")
+	}
+
+	// Получаем все блокировки
+	allBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Фильтруем только постоянные блокировки (не одноразовые и с дальним сроком окончания)
+	var permanentBlocks []models.AppTimeBlock
+	for _, block := range allBlocks {
+		if !block.IsOneTime && block.Duration == "Постоянная блокировка" {
+			permanentBlocks = append(permanentBlocks, block)
+		}
+	}
+
+	return permanentBlocks, nil
 }

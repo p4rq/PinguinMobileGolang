@@ -19,7 +19,6 @@ type AppTimeBlock struct {
 type TempBlockRequest struct {
 	ChildFirebaseUID string   `json:"child_firebase_uid" binding:"required"`
 	AppPackages      []string `json:"app_packages" binding:"required"`
-	DurationMins     int      `json:"duration_mins" binding:"required,gte=1"` // Добавили gte=1
-	BlockName        string   `json:"block_name,omitempty"`                   // Название блока
-
+	DurationMins     int      `json:"duration_mins" binding:"required"` // Потенциальная проблема
+	BlockName        string   `json:"block_name,omitempty"`
 }

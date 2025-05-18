@@ -592,9 +592,9 @@ func ManageOneTimeRules(c *gin.Context) {
 		Apps              []string `json:"apps" binding:"required"`
 		Action            string   `json:"action" binding:"required,oneof=block unblock"` // Определяет действие
 
-		// Параметры для блокировки - только минуты
-		DurationMinutes int    `json:"duration_mins" binding:"required_if=Action block"`
-		BlockName       string `json:"block_name,omitempty"` // Добавляем название блока
+		// Параметры для блокировки - теперь duration_mins соответствует полю в запросе
+		DurationMins int    `json:"duration_mins" binding:"required_if=action block"` // Изменено с DurationMinutes
+		BlockName    string `json:"block_name,omitempty"`                             // Добавляем название блока
 
 		// Параметры для разблокировки
 		BlockIDs []int64 `json:"block_ids,omitempty"`
@@ -606,9 +606,9 @@ func ManageOneTimeRules(c *gin.Context) {
 	}
 
 	if request.Action == "block" {
-		// Проверка наличия необходимого параметра
-		if request.DurationMinutes <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "duration_mins is required for block action"})
+		// Проверяем, что duration_mins не отрицательное
+		if request.DurationMins < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "duration_mins cannot be negative"})
 			return
 		}
 
@@ -616,7 +616,7 @@ func ManageOneTimeRules(c *gin.Context) {
 		tempBlockRequest := services.TempBlockRequest{
 			ChildFirebaseUID: request.ChildFirebaseUID,
 			AppPackages:      request.Apps,
-			DurationMins:     request.DurationMinutes,
+			DurationMins:     request.DurationMins, // Используем DurationMins
 			BlockName:        request.BlockName,
 		}
 
@@ -653,7 +653,7 @@ func ManageOneTimeRules(c *gin.Context) {
 						"duration":      block.Duration,
 						"block_name":    block.BlockName,
 						"apps":          []string{block.AppPackage},
-						"remaining_min": request.DurationMinutes,
+						"remaining_min": request.DurationMins,
 						"is_one_time":   true,
 					}
 				}
