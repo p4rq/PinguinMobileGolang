@@ -321,17 +321,18 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	now := time.Now()
 	var endTime time.Time
 	var durationText string
-	var isOneTime bool
+	var isOneTime bool = true // Всегда устанавливаем isOneTime = true
+	var isPermanent bool = false
 
 	if request.DurationMins == 0 {
-		// Для постоянной блокировки устанавливаем очень далекую дату
-		endTime = now.AddDate(100, 0, 0) // 100 лет вперед
+		// Для постоянной блокировки просто устанавливаем специальную метку
+		// но не устанавливаем специальное время окончания
+		endTime = now // Не имеет значения, так как это постоянная блокировка
 		durationText = "Постоянная блокировка"
-		isOneTime = true // Это не одноразовая, а постоянная блокировка
+		isPermanent = true
 	} else {
 		endTime = now.Add(time.Duration(request.DurationMins) * time.Minute)
 		durationText = formatDuration(request.DurationMins)
-		isOneTime = true // Это одноразовая блокировка
 	}
 
 	// Установить более осмысленные значения для StartTime и EndTime
@@ -360,6 +361,15 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 			continue
 		}
 
+		// Определяем значение OneTimeEndAt на основе isPermanent
+		var blockEndTime time.Time
+		if isPermanent {
+			// Для постоянных блокировок используем нулевое время
+			blockEndTime = time.Time{}
+		} else {
+			blockEndTime = endTime
+		}
+
 		block := models.AppTimeBlock{
 			ID:           time.Now().UnixNano(), // Генерируем ID
 			AppPackage:   appPackage,
@@ -367,9 +377,10 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 			EndTime:      endTimeStr,
 			DaysOfWeek:   "1,2,3,4,5,6,7",
 			IsOneTime:    isOneTime,
-			OneTimeEndAt: endTime,
+			OneTimeEndAt: blockEndTime,
 			Duration:     durationText,
 			BlockName:    request.BlockName,
+			IsPermanent:  isPermanent,
 		}
 		newBlocks = append(newBlocks, block)
 	}
@@ -449,8 +460,11 @@ func (s *ParentService) GetOneTimeBlocks(parentFirebaseUID, childFirebaseUID str
 	// Фильтруем только активные одноразовые блокировки
 	var oneTimeBlocks []models.AppTimeBlock
 	for _, block := range allBlocks {
-		if block.IsOneTime && block.OneTimeEndAt.After(now) {
-			oneTimeBlocks = append(oneTimeBlocks, block)
+		if block.IsOneTime {
+			// Добавляем блок, если он постоянный или если его время не истекло
+			if block.IsPermanent || block.OneTimeEndAt.After(now) {
+				oneTimeBlocks = append(oneTimeBlocks, block)
+			}
 		}
 	}
 

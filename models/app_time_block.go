@@ -13,6 +13,8 @@ type AppTimeBlock struct {
 	OneTimeEndAt time.Time `json:"one_time_end_at,omitempty"`
 	Duration     string    `json:"duration,omitempty"`
 	BlockName    string    `json:"block_name,omitempty"`
+	IsPermanent  bool      `json:"is_permanent,omitempty"` // Добавленное поле
+
 }
 
 // TempBlockRequest представляет запрос на временную одноразовую блокировку
