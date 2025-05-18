@@ -310,30 +310,65 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	}
 
 	// Вычисляем время окончания блокировки
-	endTime := time.Now().Add(time.Duration(request.DurationHours * float64(time.Hour)))
+	now := time.Now()
+	endTime := now.Add(time.Duration(request.DurationHours * float64(time.Hour)))
 
-	// Создаем блоки для одноразовой блокировки
-	var blocks []models.AppTimeBlock
+	// Установить более осмысленные значения для StartTime и EndTime
+	startTimeStr := now.Format("15:04")
+	endTimeStr := endTime.Format("15:04")
+
+	// Создаем новые блоки для одноразовой блокировки
+	var newBlocks []models.AppTimeBlock
 	for _, appPackage := range request.AppPackages {
 		block := models.AppTimeBlock{
+			ID:           time.Now().UnixNano(), // Генерируем ID
 			AppPackage:   appPackage,
-			StartTime:    "00:00",                               // Начало дня
-			EndTime:      "23:59",                               // Конец дня
-			DaysOfWeek:   "1,2,3,4,5,6,7",                       // Все дни недели
-			IsOneTime:    true,                                  // Флаг одноразовой блокировки
-			OneTimeEndAt: endTime,                               // Время окончания блокировки
-			Duration:     formatDuration(request.DurationHours), // Длительность в читаемом формате
+			StartTime:    startTimeStr, // Текущее время как начало блокировки
+			EndTime:      endTimeStr,   // Рассчитанное время окончания
+			DaysOfWeek:   "1,2,3,4,5,6,7",
+			IsOneTime:    true,
+			OneTimeEndAt: endTime,
+			Duration:     formatDuration(request.DurationHours),
 		}
-		blocks = append(blocks, block)
+		newBlocks = append(newBlocks, block)
 	}
 
-	// Сохраняем блокировки через репозиторий ребенка
-	if err := s.ChildRepo.AddTimeBlockedApps(child.ID, blocks); err != nil {
+	// Получаем существующие блокировки
+	existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Фильтруем существующие блоки, убирая ранее созданные одноразовые блокировки
+	// для тех же приложений
+	var filteredBlocks []models.AppTimeBlock
+	appsMap := make(map[string]bool)
+	for _, app := range request.AppPackages {
+		appsMap[app] = true
+	}
+
+	for _, block := range existingBlocks {
+		// Пропускаем одноразовые блоки для тех же приложений
+		if block.IsOneTime && appsMap[block.AppPackage] {
+			continue
+		}
+		filteredBlocks = append(filteredBlocks, block)
+	}
+
+	// Объединяем отфильтрованные существующие и новые блоки
+	allBlocks := append(filteredBlocks, newBlocks...)
+
+	// Сохраняем обновленный список блоков
+	if err := s.ChildRepo.RemoveAllTimeBlockedApps(child.ID); err != nil {
+		return nil, err
+	}
+
+	if err := s.ChildRepo.AddTimeBlockedApps(child.ID, allBlocks); err != nil {
 		return nil, err
 	}
 
 	// Возвращаем созданные блокировки
-	return blocks, nil
+	return newBlocks, nil
 }
 
 // GetOneTimeBlocks возвращает список активных одноразовых блокировок для ребенка
