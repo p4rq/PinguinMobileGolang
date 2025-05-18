@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"PinguinMobile/models"
 	"PinguinMobile/services"
 	"encoding/json"
 	"fmt"
@@ -318,13 +317,13 @@ func GetOneTimeBlocks(c *gin.Context) {
 			apps = append(apps, block.AppPackage)
 			group["apps"] = apps
 		} else {
-			// Создаем новую группу
+			// Создаем новую группу без поля duration
 			groupedBlocks[key] = map[string]interface{}{
 				"id":            block.ID,
 				"end_time":      block.OneTimeEndAt,
 				"remaining_min": remainingMin, // Оставшееся время в минутах
 				"apps":          []string{block.AppPackage},
-				"duration":      block.Duration,
+				"block_name":    block.BlockName, // Сохраняем название блока
 				"is_one_time":   true,
 			}
 		}
@@ -536,15 +535,9 @@ func ManageAppTimeRules(c *gin.Context) {
 			}
 		}
 
-		// Преобразуем в массив для ответа
-		var groupedResult []map[string]interface{}
-		for _, group := range groupedBlocks {
-			groupedResult = append(groupedResult, group)
-		}
-
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Apps blocked by time successfully",
-			"blocks":  groupedResult,
+			"blocks":  groupedBlocks,
 		})
 	} else if request.Action == "unblock" {
 		// Проверяем, есть ли ID блоков для разблокировки
@@ -598,8 +591,9 @@ func ManageOneTimeRules(c *gin.Context) {
 		Apps              []string `json:"apps" binding:"required"`
 		Action            string   `json:"action" binding:"required,oneof=block unblock"` // Определяет действие
 
-		// Параметры для блокировки
-		DurationHours float64 `json:"duration_hours,omitempty"`
+		// Параметры для блокировки - только минуты
+		DurationMinutes int    `json:"duration_mins" binding:"required_if=Action block"`
+		BlockName       string `json:"block_name,omitempty"` // Добавляем название блока
 
 		// Параметры для разблокировки
 		BlockIDs []int64 `json:"block_ids,omitempty"`
@@ -612,16 +606,17 @@ func ManageOneTimeRules(c *gin.Context) {
 
 	if request.Action == "block" {
 		// Проверка наличия необходимого параметра
-		if request.DurationHours <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "duration_hours is required for block action"})
+		if request.DurationMinutes <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "duration_mins is required for block action"})
 			return
 		}
 
-		// Создаем объект запроса для BlockAppsTempOnce
+		// Создаем объект запроса для BlockAppsTempOnce с минутами
 		tempBlockRequest := services.TempBlockRequest{
 			ChildFirebaseUID: request.ChildFirebaseUID,
 			AppPackages:      request.Apps,
-			DurationHours:    request.DurationHours,
+			DurationMins:     request.DurationMinutes,
+			BlockName:        request.BlockName,
 		}
 
 		// Вызываем метод блокировки в сервисе с правильными аргументами
@@ -650,13 +645,15 @@ func ManageOneTimeRules(c *gin.Context) {
 					apps = append(apps, block.AppPackage)
 					group["apps"] = apps
 				} else {
-					// Создаем новую группу
+					// Создаем новую группу с информацией в минутах
 					groupedBlocks[key] = map[string]interface{}{
 						"id":            block.ID,
 						"end_time":      block.OneTimeEndAt,
 						"duration":      block.Duration,
+						"block_name":    block.BlockName,
 						"apps":          []string{block.AppPackage},
-						"remaining_min": int(request.DurationHours * 60),
+						"remaining_min": request.DurationMinutes,
+						"is_one_time":   true,
 					}
 				}
 			}
@@ -679,61 +676,17 @@ func ManageOneTimeRules(c *gin.Context) {
 			})
 		}
 	} else if request.Action == "unblock" {
-		// Проверка наличия приложений или ID блоков
-		if len(request.Apps) == 0 && len(request.BlockIDs) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Either apps or block_ids must be provided"})
+		if len(request.BlockIDs) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "block_ids are required for unblock action"})
 			return
 		}
 
-		var err error
-
-		// Отмена по ID имеет приоритет
-		if len(request.BlockIDs) > 0 {
-			// Получаем все блоки для ребенка
-			blocks, err := parentService.GetOneTimeBlocks(request.ParentFirebaseUID, request.ChildFirebaseUID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-
-			// Группируем блоки
-			groupedBlocks := make(map[string][]models.AppTimeBlock)
-			for _, block := range blocks {
-				key := block.OneTimeEndAt.Format(time.RFC3339)
-				groupedBlocks[key] = append(groupedBlocks[key], block)
-			}
-
-			// Находим все ID блоков, которые нужно разблокировать
-			var allIDsToRemove []int64
-			for _, id := range request.BlockIDs {
-				// Ищем блок по ID
-				for _, blockGroup := range groupedBlocks {
-					for _, block := range blockGroup {
-						if block.ID == id {
-							// Добавляем все ID из этой группы
-							for _, groupBlock := range blockGroup {
-								allIDsToRemove = append(allIDsToRemove, groupBlock.ID)
-							}
-							break
-						}
-					}
-				}
-			}
-
-			// Удаляем дубликаты ID
-			uniqueIDs := make(map[int64]bool)
-			var uniqueIDsSlice []int64
-			for _, id := range allIDsToRemove {
-				if !uniqueIDs[id] {
-					uniqueIDs[id] = true
-					uniqueIDsSlice = append(uniqueIDsSlice, id)
-				}
-			}
-
-			err = parentService.CancelOneTimeBlocksByIDs(request.ParentFirebaseUID, request.ChildFirebaseUID, uniqueIDsSlice)
-		} else {
-			err = parentService.CancelOneTimeBlocks(request.ParentFirebaseUID, request.ChildFirebaseUID, request.Apps)
-		}
+		// Отменяем одноразовые блокировки по ID
+		err := parentService.CancelOneTimeBlocksByIDs(
+			request.ParentFirebaseUID,
+			request.ChildFirebaseUID,
+			request.BlockIDs,
+		)
 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -742,7 +695,7 @@ func ManageOneTimeRules(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "success",
-			"message": "One-time blocks canceled successfully",
+			"message": "One-time blocks successfully canceled",
 		})
 	}
 }

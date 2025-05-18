@@ -287,10 +287,12 @@ func (s *ParentService) isChildInFamily(parent models.Parent, childFirebaseUID s
 type TempBlockRequest struct {
 	ChildFirebaseUID string   `json:"child_firebase_uid" binding:"required"`
 	AppPackages      []string `json:"app_packages" binding:"required"`
-	DurationHours    float64  `json:"duration_hours" binding:"required,min=0.5,max=24"`
+	DurationMins     int      `json:"duration_mins" binding:"required"`
+	BlockName        string   `json:"block_name,omitempty"` // Название блока
+
 }
 
-// BlockAppsTempOnce блокирует приложения одноразово на указанное количество часов
+// BlockAppsTempOnce блокирует приложения одноразово на указанное количество минут
 func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request TempBlockRequest) ([]models.AppTimeBlock, error) {
 	// Получаем родителя
 	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
@@ -309,9 +311,9 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 		return nil, errors.New("child does not belong to this parent")
 	}
 
-	// Вычисляем время окончания блокировки
+	// Вычисляем время окончания блокировки (теперь используем минуты)
 	now := time.Now()
-	endTime := now.Add(time.Duration(request.DurationHours * float64(time.Hour)))
+	endTime := now.Add(time.Duration(request.DurationMins) * time.Minute)
 
 	// Установить более осмысленные значения для StartTime и EndTime
 	startTimeStr := now.Format("15:04")
@@ -348,7 +350,8 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 			DaysOfWeek:   "1,2,3,4,5,6,7",
 			IsOneTime:    true,
 			OneTimeEndAt: endTime,
-			Duration:     formatDuration(request.DurationHours),
+			Duration:     formatDuration(request.DurationMins), // Используем минуты
+			BlockName:    request.BlockName,                    // Добавляем название блока
 		}
 		newBlocks = append(newBlocks, block)
 	}
@@ -534,15 +537,24 @@ func (s *ParentService) CancelOneTimeBlocksByIDs(parentUID, childUID string, blo
 }
 
 // formatDuration форматирует продолжительность в часах в человекочитаемый формат
-func formatDuration(hours float64) string {
-	if hours < 1 {
-		return fmt.Sprintf("%.0f минут", hours*60)
-	} else if hours == 1 {
-		return "1 час"
-	} else if hours < 5 {
-		return fmt.Sprintf("%.1f часа", hours)
+func formatDuration(minutes int) string {
+	if minutes < 60 {
+		return fmt.Sprintf("%d минут", minutes)
+	}
+
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+
+	if remainingMinutes == 0 {
+		if hours == 1 {
+			return "1 час"
+		}
+		return fmt.Sprintf("%d часов", hours)
 	} else {
-		return fmt.Sprintf("%.1f часов", hours)
+		if hours == 1 {
+			return fmt.Sprintf("1 час %d минут", remainingMinutes)
+		}
+		return fmt.Sprintf("%d часов %d минут", hours, remainingMinutes)
 	}
 }
 
