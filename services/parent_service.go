@@ -474,7 +474,7 @@ func (s *ParentService) MonitorChildWithDailyData(firebaseUID string, usageData 
 }
 
 // ManageAppTimeRules обрабатывает как блокировку, так и разблокировку приложений по времени
-func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []string, action string, startTime, endTime string) error {
+func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []string, action string, startTime, endTime string, blockIDs ...int64) error {
 	// Получаем родителя
 	parent, err := s.ParentRepo.FindByFirebaseUID(parentUID)
 	if err != nil {
@@ -493,27 +493,78 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 	}
 
 	if action == "block" {
+		// Получаем существующие блокировки
+		existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+		if err != nil {
+			return err
+		}
+
 		// Создаем записи о временной блокировке
-		var blocks []models.AppTimeBlock
+		var newBlocks []models.AppTimeBlock
+
+		// Используем переданный ID или генерируем новый
+		blockID := int64(0)
+		if len(blockIDs) > 0 {
+			blockID = blockIDs[0]
+		} else {
+			blockID = time.Now().UnixNano() // Генерируем ID на основе текущего времени
+		}
+
 		for _, app := range apps {
 			block := models.AppTimeBlock{
+				ID:         blockID, // Устанавливаем ID
 				AppPackage: app,
 				StartTime:  startTime,
 				EndTime:    endTime,
 				DaysOfWeek: "1,2,3,4,5,6,7", // По умолчанию все дни недели
 				IsOneTime:  false,
 			}
-			blocks = append(blocks, block)
+			newBlocks = append(newBlocks, block)
+
+			// Увеличиваем ID для следующего блока, если нужно создать несколько
+			blockID++
 		}
 
-		// Сохраняем блокировки
-		return s.ChildRepo.AddTimeBlockedApps(child.ID, blocks)
-	} else if action == "unblock" {
-		// Удаляем блокировки для указанных приложений
-		return s.ChildRepo.RemoveTimeBlockedApps(child.ID, apps)
+		// Объединяем существующие и новые блоки
+		updatedBlocks := append(existingBlocks, newBlocks...)
+
+		// Сохраняем обновленный список блоков
+		return s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+	} else if action == "unblock" && len(blockIDs) > 0 {
+		// Здесь должна быть логика удаления блоков по ID
+		fmt.Printf("Attempting to unblock by IDs: %v", blockIDs) // Добавьте логирование
+
+		// Получение существующих блоков
+		existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+		if err != nil {
+			return err
+		}
+
+		// Создание карты ID для быстрой проверки
+		idsToRemove := make(map[int64]bool)
+		for _, id := range blockIDs {
+			idsToRemove[id] = true
+		}
+
+		// Фильтрация блоков - оставляем только те, которых нет в списке на удаление
+		var updatedBlocks []models.AppTimeBlock
+		for _, block := range existingBlocks {
+			if !idsToRemove[block.ID] {
+				updatedBlocks = append(updatedBlocks, block)
+			} else {
+				fmt.Printf("Removing block with ID: %d, App: %s", block.ID, block.AppPackage) // Логирование
+			}
+		}
+
+		// Удаление всех блоков и добавление обновленных
+		if err := s.ChildRepo.RemoveAllTimeBlockedApps(child.ID); err != nil {
+			return err
+		}
+
+		return s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
 	}
 
-	return errors.New("invalid action")
+	return nil
 }
 
 // BlockAppsWithMultipleTimeRanges блокирует приложения с несколькими временными интервалами

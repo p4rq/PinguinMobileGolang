@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -133,7 +134,41 @@ func GetTimeBlockedApps(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, blocks)
+	// Группируем блоки по временным интервалам
+	groupedBlocks := make(map[string]map[string]interface{})
+
+	for _, block := range blocks {
+		// Создаем ключ для группировки по времени
+		key := fmt.Sprintf("%s_%s_%s_%s", block.StartTime, block.EndTime, block.BlockName, block.DaysOfWeek)
+
+		if group, exists := groupedBlocks[key]; exists {
+			// Добавляем приложение в существующую группу
+			apps := group["apps"].([]string)
+			apps = append(apps, block.AppPackage)
+			group["apps"] = apps
+		} else {
+			// Создаем новую группу
+			groupedBlocks[key] = map[string]interface{}{
+				"id":           block.ID,
+				"start_time":   block.StartTime,
+				"end_time":     block.EndTime,
+				"block_name":   block.BlockName,
+				"days_of_week": block.DaysOfWeek,
+				"apps":         []string{block.AppPackage},
+				"is_one_time":  block.IsOneTime,
+			}
+		}
+	}
+
+	// Преобразуем в массив для ответа
+	var result []map[string]interface{}
+	for _, group := range groupedBlocks {
+		result = append(result, group)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"blocks": result,
+	})
 }
 
 // CheckAppBlocking проверяет, заблокировано ли приложение
