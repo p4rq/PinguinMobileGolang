@@ -3,6 +3,7 @@ package controllers
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/services"
+	ws "PinguinMobile/websocket" // Добавляем импорт пакета websocket
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,11 +11,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var chatService *services.ChatService
+var (
+	chatService  *services.ChatService
+	WebSocketHub *ws.Hub // Добавляем переменную WebSocketHub
+)
 
 func SetChatService(service *services.ChatService) {
 	chatService = service
 }
+
+// func SetWebSocketHub(hub *ws.Hub) {
+// 	wsHub = hub
+// 	WebSocketHub = hub // Устанавливаем значение также для переменной, используемой в chat_controller.go
+// 	go wsHub.Run()
+// }
 
 // SendTextMessage отправляет новое текстовое сообщение
 func SendTextMessage(c *gin.Context) {
@@ -62,7 +72,14 @@ func SendTextMessage(c *gin.Context) {
 
 	// Отправляем уведомление через WebSocket
 	if WebSocketHub != nil {
-		WebSocketHub.BroadcastChatMessage(message)
+		WebSocketHub.BroadcastMessage(ws.WebSocketMessage{
+			Type:       "chat_message",
+			ParentID:   input.ParentID,
+			SenderID:   userID.(string),
+			SenderName: message.SenderName, // Предполагаем, что это поле доступно
+			Message:    input.Message,
+			Timestamp:  message.CreatedAt, // Предполагаем, что это поле доступно
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": message})
@@ -130,7 +147,14 @@ func SendMediaMessage(c *gin.Context) {
 
 	// После успешной отправки медиа-сообщения
 	if WebSocketHub != nil {
-		WebSocketHub.BroadcastChatMessage(chatMessage)
+		WebSocketHub.BroadcastMessage(ws.WebSocketMessage{
+			Type:       "chat_message",
+			ParentID:   parentID,
+			SenderID:   userID.(string),
+			SenderName: chatMessage.SenderName,
+			Message:    chatMessage.Message, // Или может быть ссылка на медиа
+			Timestamp:  chatMessage.CreatedAt,
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": chatMessage})

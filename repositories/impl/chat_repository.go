@@ -2,6 +2,7 @@ package impl
 
 import (
 	"PinguinMobile/models"
+	"log"
 
 	"gorm.io/gorm"
 )
@@ -18,26 +19,40 @@ func (r *ChatRepositoryImpl) SaveMessage(message *models.ChatMessage) error {
 	return r.DB.Create(message).Error
 }
 
-func (r *ChatRepositoryImpl) GetFamilyMessages(parentID string, channel string, limit, offset int) ([]models.ChatMessage, error) {
-	var messages []models.ChatMessage
-	query := r.DB.Where("parent_id = ? AND is_private = ? AND is_hidden = ?", parentID, false, false)
+func (r *ChatRepositoryImpl) GetFamilyMessages(parentID string, channel string, limit int, offset int) ([]models.ChatMessage, error) {
+	log.Printf("DEBUG: GetFamilyMessages called with parentID=%s, channel=%s, limit=%d, offset=%d",
+		parentID, channel, limit, offset)
 
+	var messages []models.ChatMessage
+
+	// Построение запроса
+	query := r.DB.Where("parent_id = ?", parentID)
+
+	// Если указан канал, добавляем условие
 	if channel != "" {
 		query = query.Where("channel = ?", channel)
 	}
 
-	query = query.Order("created_at DESC")
+	// Выполнение запроса с сортировкой по времени
+	result := query.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&messages)
 
-	if limit > 0 {
-		query = query.Limit(limit)
+	if result.Error != nil {
+		log.Printf("ERROR: Failed to get messages: %v", result.Error)
+		return nil, result.Error
 	}
 
-	if offset > 0 {
-		query = query.Offset(offset)
+	log.Printf("DEBUG: Found %d messages for parentID=%s", len(messages), parentID)
+
+	// Дополнительная отладка - вывод первого сообщения, если оно есть
+	if len(messages) > 0 {
+		log.Printf("DEBUG: First message: ID=%d, Text=%s, CreatedAt=%v",
+			messages[0].ID, messages[0].Message, messages[0].CreatedAt)
 	}
 
-	err := query.Find(&messages).Error
-	return messages, err
+	return messages, nil
 }
 
 func (r *ChatRepositoryImpl) GetPrivateMessages(parentID string, user1ID, user2ID string, limit, offset int) ([]models.ChatMessage, error) {

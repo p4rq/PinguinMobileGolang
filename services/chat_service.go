@@ -54,7 +54,6 @@ func (s *ChatService) IsChildInFamily(childFirebaseUID, parentFirebaseUID string
 func (s *ChatService) SendMessage(senderID, parentID, message, channel string, isPrivate bool, recipientID string, isParent bool) (*models.ChatMessage, error) {
 	// Проверяем, что отправитель существует
 	var senderName string
-	var senderType string
 
 	if isParent {
 		parent, err := s.ParentRepo.FindByFirebaseUID(senderID)
@@ -62,7 +61,6 @@ func (s *ChatService) SendMessage(senderID, parentID, message, channel string, i
 			return nil, errors.New("parent not found")
 		}
 		senderName = parent.Name
-		senderType = "parent"
 
 		// Если родитель отправляет сообщение, проверяем, что это его семья
 		if senderID != parentID {
@@ -74,7 +72,6 @@ func (s *ChatService) SendMessage(senderID, parentID, message, channel string, i
 			return nil, errors.New("child not found")
 		}
 		senderName = child.Name
-		senderType = "child"
 
 		// Проверяем, что ребенок принадлежит к этой семье
 		inFamily, err := s.IsChildInFamily(senderID, parentID)
@@ -118,19 +115,11 @@ func (s *ChatService) SendMessage(senderID, parentID, message, channel string, i
 	}
 
 	chatMessage := &models.ChatMessage{
-		ParentID:    parentID,
-		SenderID:    senderID,
-		SenderType:  senderType,
-		SenderName:  senderName,
-		RecipientID: recipientID,
-		IsPrivate:   isPrivate,
-		Channel:     channel,
-		Message:     message,
-		MessageType: models.MessageTypeText,
-		IsModerated: false,
-		IsRead:      false,
-		IsHidden:    false,
-		CreatedAt:   time.Now(),
+		ParentID:   parentID,
+		SenderID:   senderID,
+		SenderName: senderName,
+		Message:    message,
+		CreatedAt:  time.Now(),
 	}
 
 	err := s.ChatRepo.SaveMessage(chatMessage)
@@ -200,13 +189,8 @@ func (s *ChatService) SendMediaMessage(
 	}
 
 	// Формируем URL для доступа к файлу
-	mediaURL := "/media/chat/" + uniqueFilename
 
 	// Обновляем информацию о медиа в сообщении
-	textMsg.MessageType = messageType
-	textMsg.MediaURL = mediaURL
-	textMsg.MediaName = filename
-	textMsg.MediaSize = file.Size
 
 	// Сохраняем обновленное сообщение
 	if err := s.ChatRepo.SaveMessage(textMsg); err != nil {
