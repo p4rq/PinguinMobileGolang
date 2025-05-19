@@ -31,6 +31,11 @@ func RegisterParent(c *gin.Context) {
 		return
 	}
 
+	// Определяем язык из запроса или устанавливаем по умолчанию
+	if input.Lang == "" {
+		input.Lang = "ru" // Русский как язык по умолчанию
+	}
+
 	parent, token, err := authService.RegisterParent(input.Lang, input.Name, input.Email, input.Password)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -87,12 +87,14 @@ func main() {
 	childService := services.NewChildService(childRepo, parentRepo, config.FirebaseAuth)
 	parentService := services.NewParentService(parentRepo, childRepo)
 	chatService := services.NewChatService(chatRepo, parentRepo, childRepo)
+	translationService := services.NewTranslationService(config.DB)
 
 	// Set services in controllers
 	controllers.SetAuthService(authService)
 	controllers.SetChildService(childService)
 	controllers.SetParentService(parentService)
 	controllers.SetChatService(chatService)
+	controllers.SetTranslationService(translationService)
 
 	// Инициализация WebSocket Hub с адаптером и доступом к БД
 	chatAdapter := &ChatServiceAdapter{chatService: chatService}

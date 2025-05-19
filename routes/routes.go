@@ -17,6 +17,8 @@ func RegisterRoutes(r *gin.Engine) {
 	// Маршрут WebSocket (проверьте, что он есть)
 	r.GET("/ws", controllers.ServeWs)
 	r.GET("/debug/auth", middlewares.AuthMiddleware(), controllers.DebugAuth)
+	r.GET("/translations", controllers.GetTranslations)
+
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())

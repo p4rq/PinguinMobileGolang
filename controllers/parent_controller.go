@@ -13,9 +13,14 @@ import (
 )
 
 var parentService *services.ParentService
+var translationService *services.TranslationService
 
 func SetParentService(service *services.ParentService) {
 	parentService = service
+}
+
+func SetTranslationService(service *services.TranslationService) {
+	translationService = service
 }
 
 func ReadParent(c *gin.Context) {
@@ -47,6 +52,9 @@ func UpdateParent(c *gin.Context) {
 		return
 	}
 
+	// Сохраняем текущий язык для сравнения
+	prevLang := parent.Lang
+
 	if input.Lang != "" {
 		parent.Lang = input.Lang
 	}
@@ -67,7 +75,20 @@ func UpdateParent(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Parent updated successfully", "data": updatedParent})
+	// Подготовка ответа
+	response := gin.H{
+		"message": "Parent updated successfully",
+		"data":    updatedParent,
+	}
+
+	// Если язык изменился и установлен translation_service, добавляем переводы к ответу
+	if translationService != nil && input.Lang != "" && input.Lang != prevLang {
+		translations := translationService.GetAllTranslations(input.Lang)
+		response["translations"] = translations
+		response["lang_changed"] = true
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func DeleteParent(c *gin.Context) {
