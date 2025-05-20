@@ -14,6 +14,6 @@ type Child struct {
 	Birthday        string `json:"birthday"`
 	Code            string `json:"code"`
 	BlockedApps     string `json:"blocked_apps"` // Новое поле для хранения заблокированных приложений
-	TimeBlockedApps string // Новое поле для хранения временных блокировок в формате JSON
+	TimeBlockedApps string `json:"-"`            // Новое поле для хранения временных блокировок в формате JSON
 
 }
