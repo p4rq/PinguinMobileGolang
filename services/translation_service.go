@@ -3,6 +3,7 @@ package services
 import (
 	"PinguinMobile/models"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -55,4 +56,20 @@ func (s *TranslationService) GetAllTranslations(lang string) map[string]string {
 	s.mutex.Unlock()
 
 	return result
+}
+
+// GetLastUpdateTime получает время последнего обновления перевода
+func (s *TranslationService) GetLastUpdateTime() (time.Time, error) {
+	var lastUpdate time.Time
+
+	// Получаем последнее обновление из базы данных
+	result := s.DB.Model(&models.Translation{}).
+		Select("MAX(last_updated_at) as last_updated_at").
+		Scan(&lastUpdate)
+
+	if result.Error != nil {
+		return time.Time{}, result.Error
+	}
+
+	return lastUpdate, nil
 }

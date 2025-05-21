@@ -11,11 +11,21 @@ import (
 	"github.com/goccy/go-json"
 )
 
+// Убираем дублирование - используем переменные из parent_controller.go
+// var authService *services.AuthService
+// var translationService *services.TranslationService
+
+// Используем эти переменные только в auth_controller.go
 var authService *services.AuthService
 
 func SetAuthService(service *services.AuthService) {
 	authService = service
 }
+
+// Убираем дублирование - эта функция должна быть в одном файле
+// func SetTranslationService(service *services.TranslationService) {
+// 	translationService = service
+// }
 
 func RegisterParent(c *gin.Context) {
 	var input struct {
@@ -111,6 +121,7 @@ func TokenVerify(c *gin.Context) {
 
 	// Проверяем, является ли пользователь ребенком
 	child, isChild := user.(models.Child)
+	parent, isParent := user.(models.Parent)
 	if isChild && child.TimeBlockedApps != "" {
 		var timeBlockRules []struct {
 			ID           int64     `json:"id"`
@@ -262,28 +273,89 @@ func TokenVerify(c *gin.Context) {
 			}
 
 			// Продолжаем с существующим кодом...
-			type ChildWithBlocks struct {
-				models.Child
-				Blocks []map[string]interface{} `json:"blocks"`
+
+			// Получаем информацию о последнем обновлении переводов
+			lastUpdateTime, err := translationService.GetLastUpdateTime()
+			if err != nil {
+				// Если ошибка, используем текущее время чтобы избежать ошибок
+				lastUpdateTime = time.Now()
 			}
 
-			childWithBlocks := ChildWithBlocks{
-				Child:  child,
-				Blocks: allBlocks,
+			// Формируем информацию о переводах
+			translationInfo := gin.H{
+				"lastUpdatedAt": lastUpdateTime,
+				"langUpdate":    true, // Флаг для клиента, что нужно обновить переводы
 			}
 
+			// Добавляем информацию о переводах к ответу
 			c.JSON(http.StatusOK, gin.H{
 				"message": true,
-				"user":    childWithBlocks,
+				"user": gin.H{
+					"id":                child.ID,
+					"role":              child.Role,
+					"lang":              child.Lang,
+					"name":              child.Name,
+					"family":            child.Family,
+					"firebase_uid":      child.FirebaseUID,
+					"is_binded":         child.IsBinded,
+					"usage_data":        child.UsageData,
+					"gender":            child.Gender,
+					"age":               child.Age,
+					"birthday":          child.Birthday,
+					"code":              child.Code,
+					"blocks":            allBlocks,
+					"translations_info": translationInfo, // Добавляем информацию о переводах
+				},
 			})
 			return
 		}
+	} else if isParent {
+		// Если пользователь - родитель
+		// Определяем translationInfo для родителя
+		lastUpdateTime, err := translationService.GetLastUpdateTime()
+		if err != nil {
+			lastUpdateTime = time.Now()
+		}
+
+		translationInfo := gin.H{
+			"lastUpdatedAt": lastUpdateTime,
+			"langUpdate":    true,
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": true,
+			"user": gin.H{
+				"id":                parent.ID,
+				"role":              parent.Role,
+				"lang":              parent.Lang,
+				"name":              parent.Name,
+				"family":            parent.Family,
+				"firebase_uid":      parent.FirebaseUID,
+				"email":             parent.Email,
+				"code":              parent.Code,
+				"code_expires_at":   parent.CodeExpiresAt,
+				"translations_info": translationInfo,
+			},
+		})
+		return
 	}
 
-	// Если пользователь не ребенок или нет блокировок - возвращаем стандартный ответ
+	// Для других типов пользователей
+	// Определяем translationInfo для всех остальных типов пользователей
+	lastUpdateTime, err := translationService.GetLastUpdateTime()
+	if err != nil {
+		lastUpdateTime = time.Now()
+	}
+
+	translationInfo := gin.H{
+		"lastUpdatedAt": lastUpdateTime,
+		"langUpdate":    true,
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": true,
-		"user":    user,
+		"message":           true,
+		"user":              user,
+		"translations_info": translationInfo,
 	})
 }
 
