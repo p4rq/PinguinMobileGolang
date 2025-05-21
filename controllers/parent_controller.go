@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -385,6 +386,8 @@ func CancelOneTimeBlocks(c *gin.Context) {
 
 // ManageAppTimeRules обрабатывает как блокировку, так и разблокировку приложений по времени
 func ManageAppTimeRules(c *gin.Context) {
+	fmt.Println("[ManageAppTimeRules] Начало обработки запроса")
+
 	var request struct {
 		ParentFirebaseUID string   `json:"parent_firebase_uid" binding:"required"`
 		ChildFirebaseUID  string   `json:"child_firebase_uid" binding:"required"`
@@ -406,22 +409,48 @@ func ManageAppTimeRules(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
+		fmt.Printf("[ManageAppTimeRules] Ошибка привязки JSON: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Логируем детали запроса
+	fmt.Printf("[ManageAppTimeRules] Получены данные: parentUID=%s, childUID=%s, action=%s, apps=%v\n",
+		request.ParentFirebaseUID, request.ChildFirebaseUID, request.Action, request.Apps)
+
+	// Проверка типов данных в массиве apps
+	fmt.Printf("[ManageAppTimeRules] Детали массива apps (len=%d):\n", len(request.Apps))
+	for i, app := range request.Apps {
+		fmt.Printf("  - App[%d]: '%s' (тип: %T)\n", i, app, app)
+		if strings.Contains(app, ",") {
+			fmt.Printf("  ! ВНИМАНИЕ: App[%d] содержит запятые: '%s'\n", i, app)
+		}
+	}
+
 	// Проверка наличия необходимых для блокировки параметров
 	if request.Action == "block" {
+		fmt.Println("[ManageAppTimeRules] Обработка действия блокировки")
+
 		// Отслеживаем созданные блоки для возврата ID
 		var createdBlocks []map[string]interface{}
 
 		// Проверяем новый формат
 		if len(request.TimeBlocks) > 0 {
+			fmt.Printf("[ManageAppTimeRules] Используем новый формат с множественными блоками (%d блоков)\n",
+				len(request.TimeBlocks))
+
 			// Используем новый формат с множественными блоками
-			for _, timeBlock := range request.TimeBlocks {
-				for _, app := range request.Apps {
+			for i, timeBlock := range request.TimeBlocks {
+				fmt.Printf("[ManageAppTimeRules] Обработка блока %d: start=%s, end=%s, name=%s\n",
+					i+1, timeBlock.StartTime, timeBlock.EndTime, timeBlock.BlockName)
+
+				for j, app := range request.Apps {
+					fmt.Printf("[ManageAppTimeRules] Блокировка приложения %d/%d: %s\n",
+						j+1, len(request.Apps), app)
+
 					// Создаем блок времени
 					blockID := time.Now().UnixNano() // Генерируем уникальный ID
+					fmt.Printf("[ManageAppTimeRules] Сгенерирован ID блока: %d\n", blockID)
 
 					err := parentService.ManageAppTimeRules(
 						request.ParentFirebaseUID,
@@ -434,9 +463,12 @@ func ManageAppTimeRules(c *gin.Context) {
 						blockID,             // Передаем ID в метод
 					)
 					if err != nil {
+						fmt.Printf("[ManageAppTimeRules] Ошибка при создании блока: %v\n", err)
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
 					}
+
+					fmt.Println("[ManageAppTimeRules] Блок успешно создан")
 
 					// Добавляем созданный блок в список для ответа
 					createdBlocks = append(createdBlocks, map[string]interface{}{
@@ -450,6 +482,9 @@ func ManageAppTimeRules(c *gin.Context) {
 				}
 			}
 
+			fmt.Printf("[ManageAppTimeRules] Создано всего %d блоков\n", len(createdBlocks))
+			fmt.Println("[ManageAppTimeRules] Группировка созданных блоков для ответа")
+
 			// ИСПРАВЛЕНО: Группируем блоки для нового формата так же, как для старого
 			groupedBlocks := make(map[string]map[string]interface{})
 
@@ -461,13 +496,19 @@ func ManageAppTimeRules(c *gin.Context) {
 					block["block_name"],
 					block["days_of_week"])
 
+				fmt.Printf("[ManageAppTimeRules] Обработка блока для группировки: app=%s, ключ=%s\n",
+					block["app_package"].(string), key)
+
 				if group, exists := groupedBlocks[key]; exists {
 					// Добавляем приложение в существующую группу
 					apps := group["apps"].([]string)
 					apps = append(apps, block["app_package"].(string))
 					group["apps"] = apps
+					fmt.Printf("[ManageAppTimeRules] Добавлено приложение %s в существующую группу\n",
+						block["app_package"].(string))
 				} else {
 					// Создаем новую группу
+					fmt.Printf("[ManageAppTimeRules] Создание новой группы для ключа: %s\n", key)
 					groupedBlocks[key] = map[string]interface{}{
 						"id":           block["id"],
 						"start_time":   block["start_time"],
@@ -481,9 +522,12 @@ func ManageAppTimeRules(c *gin.Context) {
 
 			// Преобразуем в массив для ответа
 			var groupedResult []map[string]interface{}
-			for _, group := range groupedBlocks {
+			for key, group := range groupedBlocks {
+				fmt.Printf("[ManageAppTimeRules] Добавление группы '%s' в результат\n", key)
 				groupedResult = append(groupedResult, group)
 			}
+
+			fmt.Printf("[ManageAppTimeRules] Итоговый ответ содержит %d групп блоков\n", len(groupedResult))
 
 			c.JSON(http.StatusOK, gin.H{
 				"message": "Apps blocked by time successfully",
@@ -494,13 +538,19 @@ func ManageAppTimeRules(c *gin.Context) {
 
 		// Проверяем старый формат
 		if request.StartTime == "" || request.EndTime == "" {
+			fmt.Println("[ManageAppTimeRules] Ошибка: не указаны start_time и end_time для старого формата")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "start_time and end_time are required for block action"})
 			return
 		}
 
+		fmt.Printf("[ManageAppTimeRules] Используем старый формат: start_time=%s, end_time=%s\n",
+			request.StartTime, request.EndTime)
+
 		// Используем старый формат с генерацией ID
-		for _, app := range request.Apps {
-			blockID := time.Now().UnixNano() + int64(len(createdBlocks)) // Генерируем уникальный ID
+		for i, app := range request.Apps {
+			blockID := time.Now().UnixNano() + int64(i) // Генерируем уникальный ID
+			fmt.Printf("[ManageAppTimeRules] Блокировка приложения %d/%d: %s (ID=%d)\n",
+				i+1, len(request.Apps), app, blockID)
 
 			err := parentService.ManageAppTimeRules(
 				request.ParentFirebaseUID,
@@ -514,9 +564,12 @@ func ManageAppTimeRules(c *gin.Context) {
 			)
 
 			if err != nil {
+				fmt.Printf("[ManageAppTimeRules] Ошибка при создании блока: %v\n", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+
+			fmt.Printf("[ManageAppTimeRules] Блок для приложения %s успешно создан\n", app)
 
 			// Добавляем созданный блок в список для ответа
 			createdBlocks = append(createdBlocks, map[string]interface{}{
@@ -527,6 +580,9 @@ func ManageAppTimeRules(c *gin.Context) {
 				"days_of_week": "1,2,3,4,5,6,7",
 			})
 		}
+
+		fmt.Printf("[ManageAppTimeRules] Создано всего %d блоков по старому формату\n", len(createdBlocks))
+		fmt.Println("[ManageAppTimeRules] Группировка созданных блоков для ответа")
 
 		// Вместо возврата массива блоков, группируем их:
 		groupedBlocks := make(map[string]map[string]interface{})
@@ -539,13 +595,19 @@ func ManageAppTimeRules(c *gin.Context) {
 				block["block_name"],
 				block["days_of_week"])
 
+			fmt.Printf("[ManageAppTimeRules] Обработка блока для группировки: app=%s, ключ=%s\n",
+				block["app_package"].(string), key)
+
 			if group, exists := groupedBlocks[key]; exists {
 				// Добавляем приложение в существующую группу
 				apps := group["apps"].([]string)
 				apps = append(apps, block["app_package"].(string))
 				group["apps"] = apps
+				fmt.Printf("[ManageAppTimeRules] Добавлено приложение %s в существующую группу\n",
+					block["app_package"].(string))
 			} else {
 				// Создаем новую группу
+				fmt.Printf("[ManageAppTimeRules] Создание новой группы для ключа: %s\n", key)
 				groupedBlocks[key] = map[string]interface{}{
 					"id":           block["id"],
 					"start_time":   block["start_time"],
@@ -557,13 +619,20 @@ func ManageAppTimeRules(c *gin.Context) {
 			}
 		}
 
+		fmt.Printf("[ManageAppTimeRules] Создано %d групп блоков\n", len(groupedBlocks))
+		fmt.Println("[ManageAppTimeRules] Отправка успешного ответа")
+
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Apps blocked by time successfully",
 			"blocks":  groupedBlocks,
 		})
 	} else if request.Action == "unblock" {
+		fmt.Println("[ManageAppTimeRules] Обработка действия разблокировки")
+
 		// Проверяем, есть ли ID блоков для разблокировки
 		if len(request.BlockIDs) > 0 {
+			fmt.Printf("[ManageAppTimeRules] Разблокировка по ID блоков: %v\n", request.BlockIDs)
+
 			// Используем обновленный метод ManageAppTimeRules для разблокировки по ID
 			err := parentService.ManageAppTimeRules(
 				request.ParentFirebaseUID,
@@ -577,15 +646,20 @@ func ManageAppTimeRules(c *gin.Context) {
 			)
 
 			if err != nil {
+				fmt.Printf("[ManageAppTimeRules] Ошибка при разблокировке по ID: %v\n", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+
+			fmt.Println("[ManageAppTimeRules] Разблокировка по ID успешно выполнена")
 
 			c.JSON(http.StatusOK, gin.H{"message": "Apps unblocked by block IDs successfully"})
 			return
 		}
 
 		// Стандартная разблокировка по имени приложения
+		fmt.Printf("[ManageAppTimeRules] Разблокировка по именам приложений: %v\n", request.Apps)
+
 		err := parentService.ManageAppTimeRules(
 			request.ParentFirebaseUID,
 			request.ChildFirebaseUID,
@@ -597,81 +671,119 @@ func ManageAppTimeRules(c *gin.Context) {
 		)
 
 		if err != nil {
+			fmt.Printf("[ManageAppTimeRules] Ошибка при разблокировке приложений: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
+		fmt.Println("[ManageAppTimeRules] Разблокировка приложений успешно выполнена")
+
 		c.JSON(http.StatusOK, gin.H{"message": "Apps unblocked by time successfully"})
 	}
+
+	fmt.Println("[ManageAppTimeRules] Завершение обработки запроса")
 }
 
 // ManageOneTimeRules обрабатывает как создание, так и отмену одноразовой блокировки приложений
 func ManageOneTimeRules(c *gin.Context) {
+	fmt.Println("[ManageOneTimeRules] Начало обработки запроса")
+
 	var request struct {
 		ParentFirebaseUID string   `json:"parent_firebase_uid" binding:"required"`
 		ChildFirebaseUID  string   `json:"child_firebase_uid" binding:"required"`
 		Apps              []string `json:"apps" binding:"required"`
 		Action            string   `json:"action" binding:"required,oneof=block unblock"` // Определяет действие
 
-		// Параметры для блокировки - теперь duration_mins соответствует полю в запросе
-		DurationMins int    `json:"duration_mins" binding:"required_if=action block"` // Изменено с DurationMinutes
-		BlockName    string `json:"block_name,omitempty"`                             // Добавляем название блока
+		// Параметры для блокировки
+		DurationMins int    `json:"duration_mins" binding:"required_if=action block"`
+		BlockName    string `json:"block_name,omitempty"`
 
 		// Параметры для разблокировки
 		BlockIDs []int64 `json:"block_ids,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
+		fmt.Printf("[ManageOneTimeRules] Ошибка привязки JSON: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Логируем детали запроса
+	fmt.Printf("[ManageOneTimeRules] Получены данные: parentUID=%s, childUID=%s, action=%s, duration=%d, apps=%v\n",
+		request.ParentFirebaseUID, request.ChildFirebaseUID, request.Action, request.DurationMins, request.Apps)
+
+	// Проверка типов данных в массиве apps
+	fmt.Printf("[ManageOneTimeRules] Детали массива apps (len=%d):\n", len(request.Apps))
+	for i, app := range request.Apps {
+		fmt.Printf("  - App[%d]: '%s' (тип: %T)\n", i, app, app)
+		if strings.Contains(app, ",") {
+			fmt.Printf("  ! ВНИМАНИЕ: App[%d] содержит запятые: '%s'\n", i, app)
+		}
+	}
+
 	if request.Action == "block" {
+		fmt.Printf("[ManageOneTimeRules] Начинаем блокировку, duration_mins=%d\n", request.DurationMins)
+
 		// Проверяем, что duration_mins не отрицательное
 		if request.DurationMins < 0 {
+			fmt.Println("[ManageOneTimeRules] Ошибка: отрицательное значение duration_mins")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "duration_mins cannot be negative"})
 			return
 		}
 
-		// НОВЫЙ КОД: Если пытаемся создать постоянную блокировку (duration_mins = 0)
-		// или переопределить существующую, сначала отменяем все существующие блокировки для этих приложений
-		if request.DurationMins == 0 || request.DurationMins >= 10080 { // 0 или больше недели - считаем постоянной
+		// Логика для постоянной блокировки
+		if request.DurationMins == 0 || request.DurationMins >= 10080 {
+			fmt.Println("[ManageOneTimeRules] Обнаружена постоянная блокировка (duration_mins=0 или >=10080)")
+
 			// Сначала получаем текущие одноразовые блокировки
+			fmt.Printf("[ManageOneTimeRules] Получаем текущие блокировки для parent=%s, child=%s\n",
+				request.ParentFirebaseUID, request.ChildFirebaseUID)
+
 			currentBlocks, err := parentService.GetOneTimeBlocks(
 				request.ParentFirebaseUID,
 				request.ChildFirebaseUID,
 			)
 			if err != nil {
+				fmt.Printf("[ManageOneTimeRules] Ошибка при получении блокировок: %v\n", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			fmt.Printf("[ManageOneTimeRules] Получено %d существующих блокировок\n", len(currentBlocks))
 
 			// Собираем ID блоков для указанных приложений
 			var blocksToCancel []int64
 			for _, block := range currentBlocks {
 				for _, app := range request.Apps {
 					if block.AppPackage == app {
+						fmt.Printf("[ManageOneTimeRules] Найдена существующая блокировка для %s (ID=%d)\n",
+							app, block.ID)
 						blocksToCancel = append(blocksToCancel, block.ID)
 						break
 					}
 				}
 			}
+			fmt.Printf("[ManageOneTimeRules] Найдено %d блокировок для отмены\n", len(blocksToCancel))
 
 			// Отменяем существующие блокировки, если они есть
 			if len(blocksToCancel) > 0 {
+				fmt.Printf("[ManageOneTimeRules] Отменяем блокировки с ID: %v\n", blocksToCancel)
 				err := parentService.CancelOneTimeBlocksByIDs(
 					request.ParentFirebaseUID,
 					request.ChildFirebaseUID,
 					blocksToCancel,
 				)
 				if err != nil {
+					fmt.Printf("[ManageOneTimeRules] Ошибка при отмене блокировок: %v\n", err)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
+				fmt.Println("[ManageOneTimeRules] Успешно отменены существующие блокировки")
 			}
 		}
 
 		// Создаем объект запроса для BlockAppsTempOnce с минутами
+		fmt.Printf("[ManageOneTimeRules] Создаем запрос на блокировку для %d приложений, duration=%d\n",
+			len(request.Apps), request.DurationMins)
 		tempBlockRequest := services.TempBlockRequest{
 			ChildFirebaseUID: request.ChildFirebaseUID,
 			AppPackages:      request.Apps,
@@ -679,33 +791,41 @@ func ManageOneTimeRules(c *gin.Context) {
 			BlockName:        request.BlockName,
 		}
 
-		// Вызываем метод блокировки в сервисе с правильными аргументами
+		// Вызываем метод блокировки в сервисе
+		fmt.Println("[ManageOneTimeRules] Вызываем BlockAppsTempOnce")
 		blocks, err := parentService.BlockAppsTempOnce(
 			request.ParentFirebaseUID,
 			tempBlockRequest,
 		)
 
 		if err != nil {
+			fmt.Printf("[ManageOneTimeRules] Ошибка при блокировке: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		fmt.Printf("[ManageOneTimeRules] BlockAppsTempOnce вернул %d блоков\n", len(blocks))
 
 		// Группируем результат для ответа
 		if len(blocks) > 0 {
+			fmt.Println("[ManageOneTimeRules] Группируем блоки для ответа")
 			// Группируем блоки по времени окончания
 			groupedBlocks := make(map[string]map[string]interface{})
 
 			for _, block := range blocks {
 				// Создаем ключ для группировки по времени окончания
 				key := block.OneTimeEndAt.Format(time.RFC3339)
+				fmt.Printf("[ManageOneTimeRules] Обработка блока: app=%s, endTime=%s, key=%s\n",
+					block.AppPackage, block.OneTimeEndAt, key)
 
 				if group, exists := groupedBlocks[key]; exists {
 					// Добавляем приложение в существующую группу
 					apps := group["apps"].([]string)
 					apps = append(apps, block.AppPackage)
 					group["apps"] = apps
+					fmt.Printf("[ManageOneTimeRules] Добавлено приложение %s в существующую группу\n", block.AppPackage)
 				} else {
 					// Создаем новую группу с информацией в минутах
+					fmt.Printf("[ManageOneTimeRules] Создаем новую группу для key=%s\n", key)
 					groupedBlocks[key] = map[string]interface{}{
 						"id":            block.ID,
 						"end_time":      block.OneTimeEndAt,
@@ -720,9 +840,11 @@ func ManageOneTimeRules(c *gin.Context) {
 
 			// Преобразуем в массив для ответа
 			var result []map[string]interface{}
-			for _, group := range groupedBlocks {
+			for key, group := range groupedBlocks {
+				fmt.Printf("[ManageOneTimeRules] Добавление группы '%s' в результат\n", key)
 				result = append(result, group)
 			}
+			fmt.Printf("[ManageOneTimeRules] Итоговый результат: %d групп блокировок\n", len(result))
 
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "success",
@@ -730,15 +852,21 @@ func ManageOneTimeRules(c *gin.Context) {
 				"blocks":  result,
 			})
 		} else {
+			fmt.Println("[ManageOneTimeRules] Не создано ни одной блокировки, возможно приложения уже заблокированы")
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "success",
 				"message": "No blocks created",
 			})
 		}
 	} else if request.Action == "unblock" {
+		fmt.Println("[ManageOneTimeRules] Начинаем разблокировку")
+
 		if len(request.BlockIDs) > 0 {
+			fmt.Printf("[ManageOneTimeRules] Разблокировка по ID блоков: %v\n", request.BlockIDs)
+
 			// Если указаны конкретные приложения, отменяем блокировки только для них
 			if len(request.Apps) > 0 {
+				fmt.Printf("[ManageOneTimeRules] Разблокировка конкретных приложений: %v\n", request.Apps)
 				err := parentService.CancelOneTimeBlocks(
 					request.ParentFirebaseUID,
 					request.ChildFirebaseUID,
@@ -746,10 +874,12 @@ func ManageOneTimeRules(c *gin.Context) {
 				)
 
 				if err != nil {
+					fmt.Printf("[ManageOneTimeRules] Ошибка при разблокировке приложений: %v\n", err)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
 
+				fmt.Println("[ManageOneTimeRules] Успешная разблокировка приложений")
 				c.JSON(http.StatusOK, gin.H{
 					"status":  "success",
 					"message": "One-time blocks successfully canceled for specified apps",
@@ -758,6 +888,7 @@ func ManageOneTimeRules(c *gin.Context) {
 			}
 
 			// Отменяем все одноразовые блокировки, связанные с указанными ID блоков
+			fmt.Printf("[ManageOneTimeRules] Разблокировка по ID блоков: %v\n", request.BlockIDs)
 			err := parentService.CancelOneTimeBlocksByIDs(
 				request.ParentFirebaseUID,
 				request.ChildFirebaseUID,
@@ -765,16 +896,21 @@ func ManageOneTimeRules(c *gin.Context) {
 			)
 
 			if err != nil {
+				fmt.Printf("[ManageOneTimeRules] Ошибка при разблокировке по ID: %v\n", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 
+			fmt.Println("[ManageOneTimeRules] Успешная разблокировка по ID")
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "success",
 				"message": "One-time blocks successfully canceled",
 			})
 		} else {
+			fmt.Println("[ManageOneTimeRules] Ошибка: не указаны block_ids для разблокировки")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "block_ids are required for unblock action"})
 		}
 	}
+
+	fmt.Println("[ManageOneTimeRules] Завершение обработки запроса")
 }
