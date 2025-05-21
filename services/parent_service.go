@@ -364,8 +364,38 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 		// Определяем значение OneTimeEndAt на основе isPermanent
 		var blockEndTime time.Time
 		if isPermanent {
-			// Для постоянных блокировок используем нулевое время
-			blockEndTime = time.Time{}
+			existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			// Создаем карту приложений, которые будут помечены как постоянно заблокированные
+			appMap := make(map[string]bool)
+			for _, app := range request.AppPackages {
+				appMap[app] = true
+			}
+
+			// Удаляем приложения из временных блокировок
+			var updatedBlocks []models.AppTimeBlock
+			for _, block := range existingBlocks {
+				// Если блок не является постоянной блокировкой и приложение будет добавлено
+				// в постоянную блокировку, пропускаем его
+				if !block.IsPermanent && appMap[block.AppPackage] {
+					continue
+				}
+				updatedBlocks = append(updatedBlocks, block)
+			}
+
+			// Обновляем список блокировок (удаляем временные блокировки для этих приложений)
+			if err := s.ChildRepo.RemoveAllTimeBlockedApps(child.ID); err != nil {
+				return nil, err
+			}
+
+			if len(updatedBlocks) > 0 {
+				if err := s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks); err != nil {
+					return nil, err
+				}
+			}
 		} else {
 			blockEndTime = endTime
 		}
@@ -669,6 +699,30 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 		if err != nil {
 			return err
 		}
+
+		// Проверяем, какие приложения уже имеют постоянную блокировку
+		permanentlyBlockedApps := make(map[string]bool)
+		for _, block := range existingBlocks {
+			if block.IsOneTime && block.IsPermanent {
+				permanentlyBlockedApps[block.AppPackage] = true
+			}
+		}
+
+		// Отфильтровываем приложения, которые уже имеют постоянную блокировку
+		var filteredApps []string
+		for _, app := range apps {
+			if !permanentlyBlockedApps[app] {
+				filteredApps = append(filteredApps, app)
+			}
+		}
+
+		// Если все приложения уже заблокированы постоянно, просто выходим
+		if len(filteredApps) == 0 {
+			return nil // Все приложения уже заблокированы постоянно
+		}
+
+		// Используем отфильтрованный список приложений
+		apps = filteredApps
 
 		// Создаем карту существующих блокировок, чтобы избежать дублирования
 		existingBlockMap := make(map[string]bool)

@@ -633,11 +633,49 @@ func ManageOneTimeRules(c *gin.Context) {
 			return
 		}
 
+		// НОВЫЙ КОД: Если пытаемся создать постоянную блокировку (duration_mins = 0)
+		// или переопределить существующую, сначала отменяем все существующие блокировки для этих приложений
+		if request.DurationMins == 0 || request.DurationMins >= 10080 { // 0 или больше недели - считаем постоянной
+			// Сначала получаем текущие одноразовые блокировки
+			currentBlocks, err := parentService.GetOneTimeBlocks(
+				request.ParentFirebaseUID,
+				request.ChildFirebaseUID,
+			)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Собираем ID блоков для указанных приложений
+			var blocksToCancel []int64
+			for _, block := range currentBlocks {
+				for _, app := range request.Apps {
+					if block.AppPackage == app {
+						blocksToCancel = append(blocksToCancel, block.ID)
+						break
+					}
+				}
+			}
+
+			// Отменяем существующие блокировки, если они есть
+			if len(blocksToCancel) > 0 {
+				err := parentService.CancelOneTimeBlocksByIDs(
+					request.ParentFirebaseUID,
+					request.ChildFirebaseUID,
+					blocksToCancel,
+				)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+			}
+		}
+
 		// Создаем объект запроса для BlockAppsTempOnce с минутами
 		tempBlockRequest := services.TempBlockRequest{
 			ChildFirebaseUID: request.ChildFirebaseUID,
 			AppPackages:      request.Apps,
-			DurationMins:     request.DurationMins, // Используем DurationMins
+			DurationMins:     request.DurationMins,
 			BlockName:        request.BlockName,
 		}
 

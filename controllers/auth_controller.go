@@ -3,6 +3,7 @@ package controllers
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/services"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -111,30 +112,6 @@ func TokenVerify(c *gin.Context) {
 	// Проверяем, является ли пользователь ребенком
 	child, isChild := user.(models.Child)
 	if isChild && child.TimeBlockedApps != "" {
-		// Создаем структуры для разных типов блокировок
-		type PermanentBlockResponse struct {
-			Apps         []string  `json:"apps"`
-			BlockName    string    `json:"block_name"`
-			Duration     string    `json:"duration"`
-			EndTime      time.Time `json:"end_time,omitempty"`
-			ID           int64     `json:"id"`
-			IsOneTime    bool      `json:"is_one_time"`
-			RemainingMin int       `json:"remaining_min"`
-		}
-
-		type ScheduleBlockResponse struct {
-			Apps       []string `json:"apps"`
-			BlockName  string   `json:"block_name"`
-			DaysOfWeek string   `json:"days_of_week"`
-			EndTime    string   `json:"end_time"`
-			ID         int64    `json:"id"`
-			StartTime  string   `json:"start_time"`
-		}
-
-		// Интерфейс для объединения разных типов блокировок
-		type BlockResponse interface{}
-
-		// Десериализуем TimeBlockedApps в структуру
 		var timeBlockRules []struct {
 			ID           int64     `json:"id"`
 			AppPackage   string    `json:"app_package"`
@@ -149,65 +126,142 @@ func TokenVerify(c *gin.Context) {
 		}
 
 		if err := json.Unmarshal([]byte(child.TimeBlockedApps), &timeBlockRules); err == nil {
-			// Создаем группировки для каждого типа блокировок
-			groupedBlocksMap := make(map[string]map[string]interface{})  // Для временных блокировок
-			permanentBlocksMap := make(map[int64]map[string]interface{}) // Для постоянных блокировок
+			// Дедупликация данных при десериализации
+			// Создаем уникальные идентификаторы правил для отбора дубликатов
+			uniqueRules := make(map[string]struct {
+				Rule struct {
+					ID           int64
+					AppPackage   string
+					StartTime    string
+					EndTime      string
+					DaysOfWeek   string
+					IsOneTime    bool
+					OneTimeEndAt time.Time
+					Duration     string
+					BlockName    string
+					IsPermanent  bool
+				}
+				Apps []string
+			})
 
+			// Группируем правила по ключу и собираем для них уникальные приложения
 			for _, rule := range timeBlockRules {
-				if rule.IsPermanent {
-					// Обработка постоянных блокировок
-					if block, exists := permanentBlocksMap[rule.ID]; exists {
-						// Добавляем приложение к существующей блокировке
-						apps := block["apps"].([]string)
-						apps = append(apps, rule.AppPackage)
-						block["apps"] = apps
-					} else {
-						// Создаем новую запись постоянной блокировки
-						permanentBlocksMap[rule.ID] = map[string]interface{}{
-							"id":            rule.ID,
-							"apps":          []string{rule.AppPackage},
-							"block_name":    rule.BlockName,
-							"duration":      rule.Duration,
-							"end_time":      rule.OneTimeEndAt,
-							"is_one_time":   rule.IsOneTime,
-							"remaining_min": 0,
+				// Создаем ключ для дедупликации, учитывая все важные параметры
+				key := fmt.Sprintf("%s_%s_%s_%s_%t_%t_%s",
+					rule.StartTime, rule.EndTime, rule.BlockName,
+					rule.DaysOfWeek, rule.IsOneTime, rule.IsPermanent,
+					rule.Duration)
+
+				if existingRule, exists := uniqueRules[key]; exists {
+					// Добавляем приложение только если его еще нет в списке
+					appExists := false
+					for _, app := range existingRule.Apps {
+						if app == rule.AppPackage {
+							appExists = true
+							break
 						}
 					}
+					if !appExists {
+						item := uniqueRules[key]
+						item.Apps = append(item.Apps, rule.AppPackage)
+						uniqueRules[key] = item
+					}
 				} else {
-					// Обработка временных блокировок (существующий код)
-					key := rule.StartTime + "_" + rule.EndTime + "_" + rule.BlockName + "_" + rule.DaysOfWeek
-
-					if group, exists := groupedBlocksMap[key]; exists {
-						apps := group["apps"].([]string)
-						apps = append(apps, rule.AppPackage)
-						group["apps"] = apps
-					} else {
-						groupedBlocksMap[key] = map[string]interface{}{
-							"id":           rule.ID,
-							"start_time":   rule.StartTime,
-							"end_time":     rule.EndTime,
-							"block_name":   rule.BlockName,
-							"days_of_week": rule.DaysOfWeek,
-							"apps":         []string{rule.AppPackage},
+					uniqueRules[key] = struct {
+						Rule struct {
+							ID           int64
+							AppPackage   string
+							StartTime    string
+							EndTime      string
+							DaysOfWeek   string
+							IsOneTime    bool
+							OneTimeEndAt time.Time
+							Duration     string
+							BlockName    string
+							IsPermanent  bool
 						}
+						Apps []string
+					}{
+						Rule: struct {
+							ID           int64
+							AppPackage   string
+							StartTime    string
+							EndTime      string
+							DaysOfWeek   string
+							IsOneTime    bool
+							OneTimeEndAt time.Time
+							Duration     string
+							BlockName    string
+							IsPermanent  bool
+						}{
+							ID:           rule.ID,
+							AppPackage:   rule.AppPackage,
+							StartTime:    rule.StartTime,
+							EndTime:      rule.EndTime,
+							DaysOfWeek:   rule.DaysOfWeek,
+							IsOneTime:    rule.IsOneTime,
+							OneTimeEndAt: rule.OneTimeEndAt,
+							Duration:     rule.Duration,
+							BlockName:    rule.BlockName,
+							IsPermanent:  rule.IsPermanent,
+						},
+						Apps: []string{rule.AppPackage},
 					}
 				}
 			}
 
-			// Объединяем все блоки в один массив
+			// Теперь у нас есть уникальные правила с дедуплицированными приложениями
+			// Далее создаем результат для ответа API
 			var allBlocks []map[string]interface{}
 
-			// Добавляем временные блокировки
-			for _, block := range groupedBlocksMap {
-				allBlocks = append(allBlocks, block)
+			for _, uniqueRule := range uniqueRules {
+				rule := uniqueRule.Rule
+				apps := uniqueRule.Apps
+
+				if rule.IsPermanent {
+					// Формат для постоянных блокировок
+					allBlocks = append(allBlocks, map[string]interface{}{
+						"id":            rule.ID,
+						"apps":          apps,
+						"block_name":    rule.BlockName,
+						"duration":      rule.Duration,
+						"end_time":      rule.OneTimeEndAt,
+						"is_one_time":   rule.IsOneTime,
+						"remaining_min": 0,
+						"is_permanent":  true,
+					})
+				} else if rule.IsOneTime {
+					// Формат для одноразовых блокировок
+					var remainingMins int
+					if !rule.OneTimeEndAt.IsZero() {
+						remainingMins = int(time.Until(rule.OneTimeEndAt).Minutes())
+						if remainingMins < 0 {
+							remainingMins = 0
+						}
+					}
+
+					allBlocks = append(allBlocks, map[string]interface{}{
+						"id":            rule.ID,
+						"apps":          apps,
+						"block_name":    rule.BlockName,
+						"duration":      rule.Duration,
+						"is_one_time":   true,
+						"remaining_min": remainingMins,
+					})
+				} else {
+					// Формат для временных блокировок по расписанию
+					allBlocks = append(allBlocks, map[string]interface{}{
+						"id":           rule.ID,
+						"apps":         apps,
+						"block_name":   rule.BlockName,
+						"start_time":   rule.StartTime,
+						"end_time":     rule.EndTime,
+						"days_of_week": rule.DaysOfWeek,
+					})
+				}
 			}
 
-			// Добавляем постоянные блокировки
-			for _, block := range permanentBlocksMap {
-				allBlocks = append(allBlocks, block)
-			}
-
-			// Добавляем ответ с правильно сгруппированными блоками
+			// Продолжаем с существующим кодом...
 			type ChildWithBlocks struct {
 				models.Child
 				Blocks []map[string]interface{} `json:"blocks"`
