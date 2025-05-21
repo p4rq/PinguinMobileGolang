@@ -4,7 +4,8 @@ import (
 	"PinguinMobile/models"
 	"fmt"
 	"net/http"
-	"time"
+	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -225,10 +226,23 @@ func CheckAppBlocking(c *gin.Context) {
 			if err == nil {
 				for _, block := range blocks {
 					if block.AppPackage == appPackage && block.IsOneTime {
-						remainingTime := time.Until(block.OneTimeEndAt)
+						// Извлекаем числовое значение из строки Duration, если нужно
+						var durationMin int
+						if block.OriginalDuration > 0 {
+							durationMin = block.OriginalDuration
+						} else {
+							// Извлекаем из строки как запасной вариант
+							re := regexp.MustCompile(`\d+`)
+							matches := re.FindString(block.Duration)
+							if matches != "" {
+								durationMin, _ = strconv.Atoi(matches)
+							}
+						}
+
 						response["end_time"] = block.OneTimeEndAt
-						response["remaining_minutes"] = int(remainingTime.Minutes())
+						response["remaining_minutes"] = block.OriginalDuration
 						response["duration"] = block.Duration
+						response["duration_min"] = durationMin // Добавляем новое числовое поле
 						break
 					}
 				}

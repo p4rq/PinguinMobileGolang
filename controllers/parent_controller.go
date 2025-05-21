@@ -345,20 +345,34 @@ func GetOneTimeBlocks(c *gin.Context) {
 			}
 		}
 
+		// Извлекаем числовое значение из строки Duration
+		// var durationMin int
+		// if block.OriginalDuration > 0 {
+		// 	durationMin = block.OriginalDuration
+		// } else {
+		// 	// Извлекаем из строки как запасной вариант
+		// 	re := regexp.MustCompile(`\d+`)
+		// 	matches := re.FindString(block.Duration)
+		// 	if matches != "" {
+		// 		durationMin, _ = strconv.Atoi(matches)
+		// 	}
+		// }
+
 		if group, exists := groupedBlocks[key]; exists {
 			// Добавляем приложение в существующую группу
 			apps := group["apps"].([]string)
 			apps = append(apps, block.AppPackage)
 			group["apps"] = apps
 		} else {
-			// Создаем новую группу без поля duration
+			// Создаем новую группу с информацией в минутах и новым полем duration_min
 			groupedBlocks[key] = map[string]interface{}{
-				"id":            block.ID,
-				"end_time":      block.OneTimeEndAt,
-				"duration":      block.Duration,
-				"block_name":    block.BlockName, // Сохраняем название блока
+				"id":       block.ID,
+				"end_time": block.OneTimeEndAt,
+				"duration": block.Duration, // "7 минут"
+				// "duration_min":  durationMin,    // 7 (как число)
+				"block_name":    block.BlockName,
 				"is_one_time":   true,
-				"remaining_min": originalDurationMin, // Используем исходное значение вместо оставшегося времени
+				"remaining_min": block.OriginalDuration, // значение, которое не меняется
 				"apps":          []string{block.AppPackage},
 			}
 		}
@@ -836,15 +850,16 @@ func ManageOneTimeRules(c *gin.Context) {
 					group["apps"] = apps
 					fmt.Printf("[ManageOneTimeRules] Добавлено приложение %s в существующую группу\n", block.AppPackage)
 				} else {
-					// Создаем новую группу с информацией в минутах
+					// Создаем новую группу с информацией в минутах и новым полем duration_min
 					fmt.Printf("[ManageOneTimeRules] Создаем новую группу для key=%s\n", key)
 					groupedBlocks[key] = map[string]interface{}{
 						"id":            block.ID,
 						"end_time":      block.OneTimeEndAt,
-						"duration":      block.Duration,
+						"duration":      block.Duration,       // "7 минут"
+						"duration_min":  request.DurationMins, // 7 (как число)
 						"block_name":    block.BlockName,
 						"apps":          []string{block.AppPackage},
-						"remaining_min": request.DurationMins,
+						"remaining_min": request.DurationMins, // не забудьте сохранить это поле для обратной совместимости
 						"is_one_time":   true,
 					}
 				}

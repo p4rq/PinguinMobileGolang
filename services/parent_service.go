@@ -401,16 +401,17 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 		}
 
 		block := models.AppTimeBlock{
-			ID:           time.Now().UnixNano(), // Генерируем ID
-			AppPackage:   appPackage,
-			StartTime:    startTimeStr,
-			EndTime:      endTimeStr,
-			DaysOfWeek:   "1,2,3,4,5,6,7",
-			IsOneTime:    isOneTime,
-			OneTimeEndAt: blockEndTime,
-			Duration:     durationText,
-			BlockName:    request.BlockName,
-			IsPermanent:  isPermanent,
+			ID:               time.Now().UnixNano(),
+			AppPackage:       appPackage,
+			StartTime:        startTimeStr,
+			EndTime:          endTimeStr,
+			DaysOfWeek:       "1,2,3,4,5,6,7",
+			IsOneTime:        isOneTime,
+			OneTimeEndAt:     blockEndTime,
+			Duration:         durationText,
+			OriginalDuration: request.DurationMins, // Добавьте это новое поле
+			BlockName:        request.BlockName,
+			IsPermanent:      isPermanent,
 		}
 		newBlocks = append(newBlocks, block)
 	}
