@@ -5,6 +5,8 @@ import (
 	"PinguinMobile/services"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -243,13 +245,27 @@ func TokenVerify(c *gin.Context) {
 					})
 				} else if rule.IsOneTime {
 					// Формат для одноразовых блокировок
+					// ВАЖНОЕ ИЗМЕНЕНИЕ: Не вычисляем оставшееся время,
+					// а извлекаем оригинальную продолжительность из строки Duration
 					var remainingMins int
-					if !rule.OneTimeEndAt.IsZero() {
-						remainingMins = int(time.Until(rule.OneTimeEndAt).Minutes())
-						if remainingMins < 0 {
-							remainingMins = 0
-						}
+
+					// Извлекаем числовое значение из строки Duration (например, "7 минут")
+					re := regexp.MustCompile(`\d+`)
+					matches := re.FindString(rule.Duration)
+					if matches != "" {
+						remainingMins, _ = strconv.Atoi(matches)
+					} else {
+						// Если не удалось извлечь число, используем 0
+						remainingMins = 0
 					}
+
+					// НЕ используем time.Until - это именно то, что вызывало уменьшение значения
+					// if !rule.OneTimeEndAt.IsZero() {
+					//     remainingMins = int(time.Until(rule.OneTimeEndAt).Minutes())
+					//     if remainingMins < 0 {
+					//         remainingMins = 0
+					//     }
+					// }
 
 					allBlocks = append(allBlocks, map[string]interface{}{
 						"id":            rule.ID,
