@@ -332,7 +332,18 @@ func GetOneTimeBlocks(c *gin.Context) {
 		key := block.OneTimeEndAt.Format(time.RFC3339)
 
 		// Вычисляем оставшееся время в минутах
-		remainingMin := int(math.Max(0, block.OneTimeEndAt.Sub(now).Minutes()))
+		// remainingMin := int(math.Max(0, block.OneTimeEndAt.Sub(now).Minutes()))
+
+		// Получаем исходную длительность из строки Duration
+		var originalDurationMin int
+		if block.Duration != "" {
+			// Пытаемся извлечь числовое значение из строки формата "60 минут"
+			_, err := fmt.Sscanf(block.Duration, "%d", &originalDurationMin)
+			if err != nil {
+				// В случае ошибки оставляем вычисленное оставшееся время
+				originalDurationMin = int(math.Max(0, block.OneTimeEndAt.Sub(now).Minutes()))
+			}
+		}
 
 		if group, exists := groupedBlocks[key]; exists {
 			// Добавляем приложение в существующую группу
@@ -344,10 +355,11 @@ func GetOneTimeBlocks(c *gin.Context) {
 			groupedBlocks[key] = map[string]interface{}{
 				"id":            block.ID,
 				"end_time":      block.OneTimeEndAt,
-				"remaining_min": remainingMin, // Оставшееся время в минутах
-				"apps":          []string{block.AppPackage},
+				"duration":      block.Duration,
 				"block_name":    block.BlockName, // Сохраняем название блока
 				"is_one_time":   true,
+				"remaining_min": originalDurationMin, // Используем исходное значение вместо оставшегося времени
+				"apps":          []string{block.AppPackage},
 			}
 		}
 	}

@@ -325,8 +325,17 @@ func (s *ChildService) CheckAppBlocking(childFirebaseUID string, appPackage stri
 		if block.AppPackage == appPackage {
 			zeroTime := time.Time{}
 			// Проверяем одноразовые блокировки
-			if block.IsOneTime && block.OneTimeEndAt != zeroTime && block.OneTimeEndAt.After(now) {
-				return true, fmt.Sprintf("one time blocked until %s", block.OneTimeEndAt.Format("15:04")), nil
+			if block.IsOneTime {
+				// ИЗМЕНЕНИЕ: убираем проверку времени окончания
+				// Было: if block.IsOneTime && block.OneTimeEndAt != zeroTime && block.OneTimeEndAt.After(now) {
+				if block.OneTimeEndAt != zeroTime {
+					// Если блокировка постоянная (IsPermanent) или время еще не истекло
+					if block.IsPermanent || block.OneTimeEndAt.After(now) {
+						return true, "one_time", nil
+					}
+					// ИЗМЕНЕНИЕ: Даже если время истекло, все равно считаем блокировку активной
+					return true, "one_time", nil
+				}
 			}
 
 			// Проверяем регулярные блокировки по времени
@@ -391,8 +400,10 @@ func (s *ChildService) IsAppBlocked(childFirebaseUID, appPackage string) (bool, 
 
 	// Сначала проверяем одноразовые блокировки
 	for _, block := range blocks {
-		if block.AppPackage == appPackage && block.IsOneTime && block.OneTimeEndAt.After(now) {
-			// Найдена активная одноразовая блокировка
+		if block.AppPackage == appPackage && block.IsOneTime {
+			// ИЗМЕНЕНИЕ: Убираем проверку времени окончания
+			// Было: if block.AppPackage == appPackage && block.IsOneTime && block.OneTimeEndAt.After(now) {
+			// Найдена одноразовая блокировка, считаем ее всегда активной
 			return true, "one_time", nil
 		}
 	}
