@@ -941,3 +941,73 @@ func ManageOneTimeRules(c *gin.Context) {
 
 	fmt.Println("[ManageOneTimeRules] Завершение обработки запроса")
 }
+
+// VerifyParentEmail проверяет код подтверждения email
+func VerifyParentEmail(c *gin.Context) {
+	// Получаем firebase_uid из контекста (который был установлен middleware)
+	firebaseUID, exists := c.Get("firebase_uid")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Необходима авторизация"})
+		return
+	}
+
+	// Получаем только код из запроса
+	var input struct {
+		Code string `json:"code" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Вызываем сервис для проверки кода
+	err := parentService.VerifyEmail(firebaseUID.(string), input.Code)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Email успешно подтвержден",
+	})
+}
+
+// ResendVerificationCode также использует токен
+func ResendVerificationCode(c *gin.Context) {
+	// Получаем firebase_uid из контекста (который был установлен middleware)
+	firebaseUID, exists := c.Get("firebase_uid")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Необходима авторизация"})
+		return
+	}
+
+	// Никаких дополнительных данных не требуется в запросе
+
+	parent, err := parentService.ReadParent(firebaseUID.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"error":  "Родитель не найден",
+		})
+		return
+	}
+
+	err = parentService.SendVerificationCode(&parent)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": false,
+			"error":  fmt.Sprintf("Ошибка отправки кода: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Новый код подтверждения отправлен на вашу почту",
+	})
+}

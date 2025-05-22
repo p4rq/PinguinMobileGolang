@@ -52,13 +52,57 @@ func RegisterParent(c *gin.Context) {
 		input.Lang = "ru" // Русский как язык по умолчанию
 	}
 
+	// Проверяем, существует ли уже пользователь с таким email
+	existingParent, _ := parentService.FindByEmail(input.Email)
+	if existingParent.ID != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email уже зарегистрирован"})
+		return
+	}
+
+	// Регистрируем нового пользователя
 	parent, token, err := authService.RegisterParent(input.Lang, input.Name, input.Email, input.Password)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"message": true, "token": token, "data": parent})
+	// ВАЖНО: Находим только что созданную запись по email или Firebase UID
+	createdParent, err := parentService.FindByEmail(input.Email)
+	if err != nil || createdParent.ID == 0 {
+		// Если не нашли по email, пробуем найти по Firebase UID
+		createdParent, err = parentService.ReadParent(parent.FirebaseUID)
+		if err != nil {
+			fmt.Printf("ERROR: Не удалось найти созданного пользователя: %v\n", err)
+			// Продолжаем с исходным объектом, хотя это может привести к дублированию
+		} else {
+			// Заменяем parent на найденный объект с корректным ID
+			parent = createdParent
+		}
+	} else {
+		// Заменяем parent на найденный объект с корректным ID
+		parent = createdParent
+	}
+
+	// Теперь отправляем код на правильный объект с ID
+	err = parentService.SendVerificationCode(&parent)
+	if err != nil {
+		// Логируем ошибку, но продолжаем процесс регистрации
+		fmt.Printf("Error sending verification email: %v\n", err)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"status":  true,
+		"message": "Регистрация успешна. Проверьте email для подтверждения.",
+		"token":   token,
+		"data": gin.H{
+			"id":             parent.ID,
+			"name":           parent.Name,
+			"email":          parent.Email,
+			"firebase_uid":   parent.FirebaseUID,
+			"role":           parent.Role,
+			"email_verified": parent.EmailVerified,
+		},
+	})
 }
 
 func LoginParent(c *gin.Context) {
@@ -77,7 +121,16 @@ func LoginParent(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
-
+	// Проверяем, подтвержден ли email
+	if !parent.EmailVerified {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":            false,
+			"message":           "Email не подтвержден. Пожалуйста, проверьте почту или запросите новый код.",
+			"need_verification": true,
+			"firebase_uid":      parent.FirebaseUID,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": parent})
 }
 

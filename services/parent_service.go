@@ -361,7 +361,7 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 			continue
 		}
 
-		// Определяем значение OneTimeEndAt на основе isPermanent
+		// Определяем значение OneTimeEndTime на основе isPermanent
 		var blockEndTime time.Time
 		if isPermanent {
 			existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
@@ -972,4 +972,147 @@ func (s *ParentService) GetPermanentBlocks(parentFirebaseUID, childFirebaseUID s
 	}
 
 	return permanentBlocks, nil
+}
+
+// Добавьте эти методы в существующий ParentService
+
+// SendVerificationCode генерирует и отправляет код верификации
+func (s *ParentService) SendVerificationCode(parent *models.Parent) error {
+	// Проверка, что родитель существует и обновление если ID отсутствует
+	if parent.ID == 0 {
+		// Пытаемся найти по Firebase UID
+		if parent.FirebaseUID != "" {
+			foundParent, err := s.ReadParent(parent.FirebaseUID)
+			if err == nil {
+				parent.ID = foundParent.ID
+				fmt.Printf("DEBUG: Найден родитель по Firebase UID: %s, ID: %d\n", parent.FirebaseUID, parent.ID)
+			} else {
+				// Если не нашли по Firebase UID, ищем по email
+				foundParent, err := s.ParentRepo.FindByEmail(parent.Email)
+				if err == nil {
+					parent.ID = foundParent.ID
+					parent.FirebaseUID = foundParent.FirebaseUID
+					fmt.Printf("DEBUG: Найден родитель по Email: %s, ID: %d\n", parent.Email, parent.ID)
+				} else {
+					return fmt.Errorf("невозможно отправить код: пользователь не найден (%w)", err)
+				}
+			}
+		} else if parent.Email != "" {
+			// Если нет Firebase UID, пробуем найти по email
+			foundParent, err := s.ParentRepo.FindByEmail(parent.Email)
+			if err == nil {
+				parent.ID = foundParent.ID
+				parent.FirebaseUID = foundParent.FirebaseUID
+				fmt.Printf("DEBUG: Найден родитель по Email: %s, ID: %d\n", parent.Email, parent.ID)
+			} else {
+				return fmt.Errorf("невозможно отправить код: пользователь не найден (%w)", err)
+			}
+		} else {
+			return fmt.Errorf("невозможно отправить код: не указан Firebase UID или Email")
+		}
+	}
+
+	// Теперь продолжаем с гарантированным ID
+	if parent.ID == 0 {
+		return fmt.Errorf("невозможно отправить код: ID пользователя не определен")
+	}
+
+	// Генерируем код верификации
+	verificationCode := GenerateVerificationCode()
+
+	// Устанавливаем данные верификации
+	parent.VerificationCode = verificationCode
+	parent.EmailCodeExpiresAt = time.Now().Add(24 * time.Hour)
+
+	// Для отладки
+	fmt.Printf("Сгенерирован код: %s, срок истечения: %v для пользователя ID:%d\n",
+		verificationCode, parent.EmailCodeExpiresAt, parent.ID)
+
+	// ВАЖНО: используем Save для обновления существующей записи
+	err := s.ParentRepo.Save(*parent)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления данных: %w", err)
+	}
+
+	// Отправляем код на email
+	emailService := NewEmailService()
+	err = emailService.SendVerificationEmail(parent.Email, verificationCode)
+	if err != nil {
+		return fmt.Errorf("ошибка отправки email: %w", err)
+	}
+
+	return nil
+}
+
+// VerifyEmail проверяет код подтверждения email
+func (s *ParentService) VerifyEmail(firebaseUID, code string) error {
+	// Логирование входных данных
+	fmt.Printf("DEBUG: Проверка кода верификации. Firebase UID: %s, Код: %s\n", firebaseUID, code)
+
+	// Находим родителя по Firebase UID
+	parent, err := s.ReadParent(firebaseUID)
+	if err != nil {
+		fmt.Printf("DEBUG: Ошибка поиска родителя: %v\n", err)
+		return fmt.Errorf("родитель не найден: %w", err)
+	}
+
+	// Логирование найденных данных родителя
+	fmt.Printf("DEBUG: Найден родитель: ID=%d, Email=%s\n", parent.ID, parent.Email)
+	fmt.Printf("DEBUG: Сохраненный код: '%s', EmailVerified: %v\n", parent.VerificationCode, parent.EmailVerified)
+	fmt.Printf("DEBUG: Срок действия кода: %v\n", parent.EmailCodeExpiresAt)
+	fmt.Printf("DEBUG: Текущее время: %v\n", time.Now())
+
+	// Проверяем, подтвержден ли email
+	if parent.EmailVerified {
+		fmt.Printf("DEBUG: Email уже подтвержден\n")
+		return fmt.Errorf("email уже подтвержден")
+	}
+
+	// Проверяем срок действия кода
+	if time.Now().After(parent.EmailCodeExpiresAt) {
+		fmt.Printf("DEBUG: Код истек. Разница: %v\n",
+			time.Now().Sub(parent.EmailCodeExpiresAt))
+		return fmt.Errorf("срок действия кода истек")
+	}
+
+	// Проверяем сам код
+	if parent.VerificationCode != code {
+		fmt.Printf("DEBUG: Неверный код. Ожидается: '%s', Получен: '%s'\n",
+			parent.VerificationCode, code)
+		return fmt.Errorf("неверный код подтверждения")
+	}
+
+	// Подтверждаем email
+	parent.EmailVerified = true
+	parent.VerificationCode = "" // Очищаем код после верификации
+
+	// Обновляем данные
+	err = s.ParentRepo.Save(parent)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления данных: %w", err)
+	}
+
+	return nil
+}
+
+// ResendVerificationCode повторно отправляет код верификации
+func (s *ParentService) ResendVerificationCode(firebaseUID string) error {
+	// Находим родителя
+	parent, err := s.ReadParent(firebaseUID)
+	if err != nil {
+		return fmt.Errorf("родитель не найден: %w", err)
+	}
+
+	// Проверяем, нужна ли верификация
+	if parent.EmailVerified {
+		return fmt.Errorf("email уже подтвержден")
+	}
+
+	// Отправляем новый код верификации
+	return s.SendVerificationCode(&parent)
+}
+
+// FindByEmail находит родителя по email
+func (s *ParentService) FindByEmail(email string) (models.Parent, error) {
+	return s.ParentRepo.FindByEmail(email)
 }

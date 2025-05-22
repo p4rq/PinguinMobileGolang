@@ -18,7 +18,8 @@ func RegisterRoutes(r *gin.Engine) {
 	r.GET("/ws", controllers.ServeWs)
 	r.GET("/debug/auth", middlewares.AuthMiddleware(), controllers.DebugAuth)
 	r.GET("/translations", controllers.GetTranslations)
-
+	r.POST("/auth/verify-email", middlewares.AuthMiddleware(), controllers.VerifyParentEmail)
+	r.POST("/auth/resend-verification", middlewares.AuthMiddleware(), controllers.ResendVerificationCode)
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())

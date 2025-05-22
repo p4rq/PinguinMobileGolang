@@ -42,6 +42,10 @@ func NewAuthService(parentRepo repositories.ParentRepository, childRepo reposito
 }
 
 func (s *AuthService) RegisterParent(lang, name, email, password string) (models.Parent, string, error) {
+	existingParent, err := s.ParentRepo.FindByEmail(email)
+	if err == nil && existingParent.ID != 0 {
+		return models.Parent{}, "", fmt.Errorf("email already exists")
+	}
 	if password == "" {
 		return models.Parent{}, "", errors.New("password cannot be empty")
 	}
@@ -91,6 +95,8 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		Code:          code,
 		CodeExpiresAt: &codeExpiresAt, // Добавляем срок действия кода
 		FirebaseUID:   firebaseUid,
+		EmailVerified: false, // Email изначально не подтвержден
+
 	}
 
 	if err := s.ParentRepo.Save(parent); err != nil {

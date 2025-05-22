@@ -3,16 +3,19 @@ package models
 import "time"
 
 type Parent struct {
-	ID            uint       `json:"id" gorm:"primary_key"`
-	Lang          string     `json:"lang"`
-	Name          string     `json:"name"`
-	Family        string     `json:"family"`
-	Email         string     `json:"email"`
-	Password      string     `json:"-"`
-	FirebaseUID   string     `json:"firebase_uid"`
-	Role          string     `json:"role"`
-	Code          string     `json:"code" gorm:"size:4"` // Ограничиваем длину кода до 4 символов
-	CodeExpiresAt *time.Time `json:"code_expires_at"`    // Время истечения кода
+	ID                 uint       `json:"id" gorm:"primary_key"`
+	Lang               string     `json:"lang"`
+	Name               string     `json:"name"`
+	Family             string     `json:"family"`
+	Email              string     `json:"email"`
+	Password           string     `json:"-"`
+	FirebaseUID        string     `json:"firebase_uid"`
+	Role               string     `json:"role"`
+	Code               string     `json:"code" gorm:"size:4"` // Ограничиваем длину кода до 4 символов
+	CodeExpiresAt      *time.Time `json:"code_expires_at"`    // Время истечения кода
+	EmailVerified      bool       `json:"email_verified"`
+	VerificationCode   string     `json:"-" gorm:"column:verification_code"`     // Убедитесь, что есть column
+	EmailCodeExpiresAt time.Time  `json:"-" gorm:"column:email_code_expires_at"` // Убедитесь, что есть column
 }
 
 func (p *Parent) IsCodeValid() bool {
