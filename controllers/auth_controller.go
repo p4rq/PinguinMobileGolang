@@ -53,9 +53,53 @@ func RegisterParent(c *gin.Context) {
 	}
 
 	// Проверяем, существует ли уже пользователь с таким email
-	existingParent, _ := parentService.FindByEmail(input.Email)
+	existingParent, err := parentService.FindByEmail(input.Email)
 	if existingParent.ID != 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email уже зарегистрирован"})
+		// Генерируем JWT токен для существующего пользователя
+		token, tokenErr := authService.GenerateToken(existingParent.FirebaseUID)
+		if tokenErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка генерации токена"})
+			return
+		}
+
+		// Если email не подтвержден, повторно отправляем код
+		if !existingParent.EmailVerified {
+			// Отправляем код верификации повторно
+			sendErr := parentService.SendVerificationCode(&existingParent)
+			if sendErr != nil {
+				fmt.Printf("Error sending verification code: %v\n", sendErr)
+			}
+
+			// Возвращаем токен и информацию, что код отправлен повторно
+			c.JSON(http.StatusOK, gin.H{
+				"status":  true,
+				"message": "Email уже зарегистрирован. Код подтверждения отправлен повторно.",
+				"token":   token,
+				"data": gin.H{
+					"id":             existingParent.ID,
+					"name":           existingParent.Name,
+					"email":          existingParent.Email,
+					"firebase_uid":   existingParent.FirebaseUID,
+					"role":           existingParent.Role,
+					"email_verified": existingParent.EmailVerified,
+				},
+			})
+		} else {
+			// Если email уже подтвержден, просто возвращаем токен и информацию
+			c.JSON(http.StatusOK, gin.H{
+				"status":  true,
+				"message": "Email уже зарегистрирован и подтвержден.",
+				"token":   token,
+				"data": gin.H{
+					"id":             existingParent.ID,
+					"name":           existingParent.Name,
+					"email":          existingParent.Email,
+					"firebase_uid":   existingParent.FirebaseUID,
+					"role":           existingParent.Role,
+					"email_verified": existingParent.EmailVerified,
+				},
+			})
+		}
 		return
 	}
 

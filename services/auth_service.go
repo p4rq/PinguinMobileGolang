@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"time"
 
 	"firebase.google.com/go/auth"
@@ -405,4 +406,27 @@ func (s *AuthService) EnsureValidParentCode(firebaseUID string) (models.Parent, 
 
 	// Код действителен, возвращаем родителя без изменений
 	return parent, nil
+}
+
+// GenerateToken создает JWT токен для пользователя по его Firebase UID
+func (s *AuthService) GenerateToken(firebaseUID string) (string, error) {
+	// Создаем токен с помощью JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"firebase_uid": firebaseUID,
+		"user_type":    "parent",                                  // Предполагаем, что это для родителя
+		"exp":          time.Now().Add(time.Hour * 24 * 7).Unix(), // Токен на неделю
+	})
+
+	// Подписываем токен с секретным ключом
+	secretKey := []byte(os.Getenv("JWT_SECRET"))
+	if len(secretKey) == 0 {
+		secretKey = []byte("default_secret_key") // Не делайте так в продакшене!
+	}
+
+	tokenString, err := token.SignedString(secretKey)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания токена: %w", err)
+	}
+
+	return tokenString, nil
 }
