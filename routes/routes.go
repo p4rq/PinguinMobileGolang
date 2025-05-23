@@ -21,6 +21,9 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/auth/verify-email", middlewares.AuthMiddleware(), controllers.VerifyParentEmail)
 	r.POST("/auth/resend-verification", middlewares.AuthMiddleware(), controllers.ResendVerificationCode)
 	r.DELETE("/:firebase_uid", controllers.DeleteParent)
+	r.POST("/auth/forgot-password", controllers.ForgotPassword)
+	r.POST("/auth/reset-password", controllers.ResetPassword)                                 // По коду из email
+	r.POST("/auth/change-password", middlewares.AuthMiddleware(), controllers.ChangePassword) // Если пользователь авторизован
 
 	// Protected routes
 	parents := r.Group("/parents")

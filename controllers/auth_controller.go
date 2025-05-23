@@ -491,3 +491,107 @@ func LoginChild(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": child})
 }
+
+// ForgotPassword обрабатывает запрос на сброс пароля
+func ForgotPassword(c *gin.Context) {
+	var input struct {
+		Email string `json:"email" binding:"required,email"`
+		Lang  string `json:"lang"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	// Проверяем, существует ли пользователь с таким email
+	parent, err := parentService.FindByEmail(input.Email)
+	if err != nil || parent.ID == 0 {
+		// Не сообщаем, что email не найден (безопасность)
+		c.JSON(http.StatusOK, gin.H{
+			"status":  true,
+			"message": "Если указанный email зарегистрирован, инструкции по сбросу пароля будут отправлены на него.",
+		})
+		return
+	}
+
+	// Определяем язык для уведомления
+	lang := input.Lang
+	if lang == "" {
+		lang = parent.Lang
+		if lang == "" {
+			lang = "ru" // По умолчанию
+		}
+	}
+
+	// Генерируем код сброса пароля и сохраняем его
+	err = parentService.SendPasswordResetCode(&parent)
+	if err != nil {
+		fmt.Printf("Error sending password reset code: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка отправки кода сброса пароля"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Инструкции по сбросу пароля отправлены на ваш email.",
+	})
+}
+
+// ResetPassword сбрасывает пароль с использованием кода подтверждения
+func ResetPassword(c *gin.Context) {
+	var input struct {
+		Email       string `json:"email" binding:"required,email"`
+		Code        string `json:"code" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required,min=8"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	// Проверяем код и сбрасываем пароль
+	err := parentService.ResetPasswordWithCode(input.Email, input.Code, input.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Ваш пароль успешно сброшен. Теперь вы можете войти с новым паролем.",
+	})
+}
+
+// ChangePassword изменяет пароль авторизованного пользователя
+func ChangePassword(c *gin.Context) {
+	var input struct {
+		CurrentPassword string `json:"current_password" binding:"required"`
+		NewPassword     string `json:"new_password" binding:"required,min=8"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
+		return
+	}
+
+	// Получаем текущего пользователя из контекста
+	firebaseUID, exists := c.Get("firebase_uid")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Требуется аутентификация"})
+		return
+	}
+
+	// Меняем пароль
+	err := parentService.ChangePassword(firebaseUID.(string), input.CurrentPassword, input.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Ваш пароль успешно изменен.",
+	})
+}

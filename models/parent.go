@@ -11,11 +11,14 @@ type Parent struct {
 	Password           string     `json:"-"`
 	FirebaseUID        string     `json:"firebase_uid"`
 	Role               string     `json:"role"`
-	Code               string     `json:"code" gorm:"size:4"` // Ограничиваем длину кода до 4 символов
-	CodeExpiresAt      *time.Time `json:"code_expires_at"`    // Время истечения кода
+	Code               string     `json:"code" gorm:"size:4"`
+	CodeExpiresAt      *time.Time `json:"code_expires_at"`
 	EmailVerified      bool       `json:"email_verified"`
-	VerificationCode   string     `json:"-" gorm:"column:verification_code"`     // Убедитесь, что есть column
-	EmailCodeExpiresAt time.Time  `json:"-" gorm:"column:email_code_expires_at"` // Убедитесь, что есть column
+	VerificationCode   string     `json:"-" gorm:"column:verification_code"`
+	EmailCodeExpiresAt time.Time  `json:"-" gorm:"column:email_code_expires_at"`
+
+	PasswordResetCode          string    `json:"-" gorm:"size:10"`
+	PasswordResetCodeExpiresAt time.Time `json:"-"`
 }
 
 func (p *Parent) IsCodeValid() bool {

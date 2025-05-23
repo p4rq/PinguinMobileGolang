@@ -17,11 +17,19 @@ import (
 	"gorm.io/gorm"
 )
 
-var jwtKey = []byte("your_secret_key")
+// Заменяем определение глобальной переменной jwtKey в начале файла
+var jwtKey []byte
 
 func init() {
 	// Инициализируем генератор случайных чисел
 	rand.Seed(time.Now().UnixNano())
+
+	// Устанавливаем глобальный секретный ключ для JWT
+	secretKey := os.Getenv("JWT_SECRET")
+	if secretKey == "" {
+		secretKey = "your_secret_key" // Дефолтный ключ, если переменная окружения не установлена
+	}
+	jwtKey = []byte(secretKey)
 }
 
 type Claims struct {
@@ -410,22 +418,31 @@ func (s *AuthService) EnsureValidParentCode(firebaseUID string) (models.Parent, 
 
 // GenerateToken создает JWT токен для пользователя по его Firebase UID
 func (s *AuthService) GenerateToken(firebaseUID string) (string, error) {
-	// Создаем токен с помощью JWT
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"firebase_uid": firebaseUID,
-		"user_type":    "parent",                                  // Предполагаем, что это для родителя
-		"exp":          time.Now().Add(time.Hour * 24 * 7).Unix(), // Токен на неделю
-	})
+	// Проверяем тип пользователя (родитель или ребенок)
+	parentExists, _ := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	userType := "parent"
 
-	// Подписываем токен с секретным ключом
-	secretKey := []byte(os.Getenv("JWT_SECRET"))
-	if len(secretKey) == 0 {
-		secretKey = []byte("default_secret_key") // Не делайте так в продакшене!
+	if parentExists.ID == 0 {
+		childExists, _ := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+		if childExists.ID != 0 {
+			userType = "child"
+		}
 	}
 
-	tokenString, err := token.SignedString(secretKey)
+	// Создаем токен с использованием той же структуры Claims
+	expirationTime := time.Now().Add(24 * time.Hour * 7) // 7 дней
+	claims := &Claims{
+		FirebaseUID: firebaseUID,
+		UserType:    userType,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expirationTime.Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		return "", fmt.Errorf("ошибка создания токена: %w", err)
+		return "", err
 	}
 
 	return tokenString, nil

@@ -3,11 +3,13 @@ package services
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/repositories"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"firebase.google.com/go/v4/auth"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -1133,4 +1135,126 @@ func (s *ParentService) ResendVerificationCode(firebaseUID string) error {
 // FindByEmail находит родителя по email
 func (s *ParentService) FindByEmail(email string) (models.Parent, error) {
 	return s.ParentRepo.FindByEmail(email)
+}
+
+// SendPasswordResetCode генерирует и отправляет код сброса пароля
+func (s *ParentService) SendPasswordResetCode(parent *models.Parent) error {
+	// Генерируем случайный код (6 цифр)
+	resetCode := GenerateVerificationCode() // Используем тот же генератор, что и для email
+
+	// Устанавливаем срок действия кода (24 часа)
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	// Сохраняем код и срок его действия
+	parent.PasswordResetCode = resetCode
+	parent.PasswordResetCodeExpiresAt = expiresAt
+
+	// Сохраняем изменения в базе данных
+	if err := s.ParentRepo.Save(*parent); err != nil {
+		return fmt.Errorf("ошибка сохранения кода сброса: %w", err)
+	}
+
+	// Отправляем код на email
+	emailService := NewEmailService()
+	err := emailService.SendPasswordResetEmail(parent.Email, resetCode)
+	if err != nil {
+		return fmt.Errorf("ошибка отправки email: %w", err)
+	}
+
+	return nil
+}
+
+// ResetPasswordWithCode проверяет код и сбрасывает пароль
+func (s *ParentService) ResetPasswordWithCode(email, code, newPassword string) error {
+	// Находим пользователя по email
+	parent, err := s.ParentRepo.FindByEmail(email)
+	if err != nil {
+		return fmt.Errorf("пользователь не найден")
+	}
+
+	// Проверяем, что код установлен
+	if parent.PasswordResetCode == "" {
+		return fmt.Errorf("код сброса пароля не был запрошен или уже использован")
+	}
+
+	// Проверяем, что код не истек
+	if time.Now().After(parent.PasswordResetCodeExpiresAt) {
+		return fmt.Errorf("срок действия кода истек, запросите новый код")
+	}
+
+	// Проверяем корректность кода
+	if parent.PasswordResetCode != code {
+		return fmt.Errorf("неверный код сброса пароля")
+	}
+
+	// Сбрасываем пароль в Firebase
+	ctx := context.Background()
+	client, err := GetAuthClient()
+	if err != nil {
+		return fmt.Errorf("ошибка инициализации Firebase: %w", err)
+	}
+
+	// Обновляем пароль в Firebase
+	userToUpdate := (&auth.UserToUpdate{}).Password(newPassword)
+	if _, err := client.UpdateUser(ctx, parent.FirebaseUID, userToUpdate); err != nil {
+		return fmt.Errorf("ошибка обновления пароля в Firebase: %w", err)
+	}
+
+	// Хешируем новый пароль для нашей БД
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("ошибка хеширования пароля: %w", err)
+	}
+
+	// Обновляем пароль и сбрасываем код сброса
+	parent.Password = string(hashedPassword)
+	parent.PasswordResetCode = ""
+	parent.PasswordResetCodeExpiresAt = time.Time{}
+
+	// Сохраняем изменения
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return fmt.Errorf("ошибка сохранения нового пароля: %w", err)
+	}
+
+	return nil
+}
+
+// ChangePassword изменяет пароль авторизованного пользователя
+func (s *ParentService) ChangePassword(firebaseUID, currentPassword, newPassword string) error {
+	// Находим пользователя по Firebase UID
+	parent, err := s.ReadParent(firebaseUID)
+	if err != nil {
+		return fmt.Errorf("пользователь не найден: %w", err)
+	}
+
+	// Проверяем текущий пароль
+	if err := bcrypt.CompareHashAndPassword([]byte(parent.Password), []byte(currentPassword)); err != nil {
+		return fmt.Errorf("неправильный текущий пароль")
+	}
+
+	// Обновляем пароль в Firebase
+	ctx := context.Background()
+	client, err := GetAuthClient()
+	if err != nil {
+		return fmt.Errorf("ошибка инициализации Firebase: %w", err)
+	}
+
+	userToUpdate := (&auth.UserToUpdate{}).Password(newPassword)
+	if _, err := client.UpdateUser(ctx, firebaseUID, userToUpdate); err != nil {
+		return fmt.Errorf("ошибка обновления пароля в Firebase: %w", err)
+	}
+
+	// Хешируем новый пароль для нашей БД
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("ошибка хеширования пароля: %w", err)
+	}
+
+	// Обновляем пароль в нашей БД
+	parent.Password = string(hashedPassword)
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return fmt.Errorf("ошибка сохранения нового пароля: %w", err)
+	}
+
+	return nil
 }
