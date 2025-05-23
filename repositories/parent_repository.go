@@ -9,4 +9,5 @@ type ParentRepository interface {
 	CountByCode(code string, count *int64) error
 	Save(parent models.Parent) error
 	DeleteByFirebaseUID(firebaseUID string) error
+	Delete(id uint) error
 }

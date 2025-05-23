@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"PinguinMobile/services"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -94,11 +95,40 @@ func UpdateParent(c *gin.Context) {
 
 func DeleteParent(c *gin.Context) {
 	firebaseUID := c.Param("firebase_uid")
-	if err := parentService.DeleteParent(firebaseUID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
+	// 1. Сначала удаляем из Firebase
+	ctx := context.Background()
+
+	// Используем GetAuthClient из services вместо firebase
+	client, err := services.GetAuthClient()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка инициализации Firebase: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Parent deleted successfully"})
+
+	// Логируем для отладки
+	fmt.Printf("Удаление пользователя из Firebase: %s\n", firebaseUID)
+
+	// Пытаемся удалить из Firebase
+	err = client.DeleteUser(ctx, firebaseUID)
+	if err != nil {
+		// Логируем ошибку, но продолжаем (возможно, пользователя уже нет в Firebase)
+		fmt.Printf("Ошибка удаления из Firebase: %v\n", err)
+	} else {
+		fmt.Printf("Пользователь успешно удален из Firebase\n")
+	}
+
+	// 2. Затем удаляем из нашей БД
+	err = parentService.DeleteParent(firebaseUID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления из базы данных: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Родитель успешно удален из Firebase и базы данных",
+	})
 }
 
 func UnbindChild(c *gin.Context) {

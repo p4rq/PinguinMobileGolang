@@ -3,6 +3,7 @@ package impl
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/repositories"
+	"fmt"
 
 	"gorm.io/gorm"
 )
@@ -49,4 +50,18 @@ func (r *ParentRepositoryImpl) Save(parent models.Parent) error {
 
 func (r *ParentRepositoryImpl) DeleteByFirebaseUID(firebaseUID string) error {
 	return r.DB.Where("firebase_uid = ?", firebaseUID).Delete(&models.Parent{}).Error
+}
+func (r *ParentRepositoryImpl) Delete(id uint) error {
+	// Проверяем, существует ли запись
+	var parent models.Parent
+	if err := r.DB.First(&parent, id).Error; err != nil {
+		return fmt.Errorf("parent not found: %w", err)
+	}
+
+	// Выполняем удаление
+	if err := r.DB.Delete(&parent).Error; err != nil {
+		return fmt.Errorf("failed to delete parent: %w", err)
+	}
+
+	return nil
 }

@@ -51,8 +51,26 @@ func (s *ParentService) UpdateParent(firebaseUID string, input models.Parent) (m
 	return parent, nil
 }
 
+// DeleteParent удаляет родителя по Firebase UID
 func (s *ParentService) DeleteParent(firebaseUID string) error {
-	return s.ParentRepo.DeleteByFirebaseUID(firebaseUID)
+	// Находим родителя по Firebase UID
+	parent, err := s.ReadParent(firebaseUID)
+	if err != nil {
+		return fmt.Errorf("ошибка поиска родителя: %w", err)
+	}
+
+	// Удаляем из Firebase Auth
+	if err := DeleteFirebaseUser(firebaseUID); err != nil {
+		// Логируем ошибку, но продолжаем удаление из локальной БД
+		fmt.Printf("Ошибка удаления из Firebase Auth: %v\n", err)
+	}
+
+	// Удаляем из локальной БД
+	if err := s.ParentRepo.Delete(parent.ID); err != nil {
+		return fmt.Errorf("ошибка удаления из базы данных: %w", err)
+	}
+
+	return nil
 }
 
 func (s *ParentService) ReadChild(firebaseUID string) (models.Child, error) {
