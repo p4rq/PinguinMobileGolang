@@ -20,13 +20,15 @@ func RegisterRoutes(r *gin.Engine) {
 	r.GET("/translations", controllers.GetTranslations)
 	r.POST("/auth/verify-email", middlewares.AuthMiddleware(), controllers.VerifyParentEmail)
 	r.POST("/auth/resend-verification", middlewares.AuthMiddleware(), controllers.ResendVerificationCode)
+	r.DELETE("/:firebase_uid", controllers.DeleteParent)
+
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())
 	{
 		parents.GET("/:firebase_uid", controllers.ReadParent)
 		parents.PUT("/:firebase_uid", controllers.UpdateParent)
-		parents.DELETE("/:firebase_uid", controllers.DeleteParent)
+		// parents.DELETE("/:firebase_uid", controllers.DeleteParent)
 		// parents.POST("/block/apps", controllers.BlockApps)
 		// parents.POST("/unblock/apps", controllers.UnblockApps)
 

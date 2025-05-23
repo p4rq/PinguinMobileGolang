@@ -2,7 +2,7 @@
 package main
 
 import (
-	"bufio"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	csvPath := filepath.Join(dir, "translatev2.csv")
+	csvPath := filepath.Join(dir, "translate.csv")
 	fmt.Printf("Поиск CSV файла по пути: %s\n", csvPath)
 
 	// Открываем CSV файл
@@ -51,12 +51,17 @@ func main() {
 	defer file.Close()
 	fmt.Println("CSV файл успешно открыт.")
 
-	// Вместо стандартного CSV reader используем построчное чтение и ручной парсинг
-	scanner := bufio.NewScanner(file)
+	// Используем стандартный CSV reader с настройками для многострочных полей
+	reader := csv.NewReader(file)
+	reader.LazyQuotes = true       // Разрешает кавычки внутри полей
+	reader.FieldsPerRecord = -1    // Допускает разное количество полей в строках
+	reader.TrimLeadingSpace = true // Удаляет начальные пробелы в полях
 
-	// Пропускаем заголовок (первая строка)
-	if scanner.Scan() {
-		fmt.Println("Заголовок пропущен:", scanner.Text())
+	// Читаем все строки CSV файла
+	records, err := reader.ReadAll()
+	if err != nil {
+		fmt.Println("Ошибка при чтении CSV файла:", err)
+		os.Exit(1)
 	}
 
 	// Подключаемся к базе данных
@@ -108,36 +113,53 @@ func main() {
 	// Счетчик импортированных записей
 	count := 0
 
-	// Обработка строк файла
-	for scanner.Scan() {
-		line := scanner.Text()
+	// Пропускаем заголовок (первая строка)
+	header := records[0]
+	fmt.Println("Заголовок пропущен:", strings.Join(header, ", "))
+
+	// Обработка строк файла (начиная со второй строки)
+	for _, record := range records[1:] {
 		// Пропускаем пустые строки
-		if strings.TrimSpace(line) == "" {
+		if len(record) == 0 || (len(record) == 1 && strings.TrimSpace(record[0]) == "") {
 			continue
 		}
 
-		// Ручной парсинг строки с учетом кавычек
-		parts := parseCSVLine(line)
-		if len(parts) < 4 {
-			fmt.Println("Строка имеет недостаточно данных:", line)
+		// Проверяем наличие достаточного количества полей
+		if len(record) < 3 {
+			fmt.Println("Строка имеет недостаточно данных:", strings.Join(record, ", "))
 			continue
 		}
 
 		// Извлекаем и валидируем ID
-		idStr := parts[0]
+		idStr := strings.TrimSpace(record[0])
 		id, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
-			fmt.Printf("Ошибка при конвертации ID '%s': %v, строка: %s\n", idStr, err, line)
+			fmt.Printf("Ошибка при конвертации ID '%s': %v, строка: %s\n", idStr, err, strings.Join(record, ", "))
 			continue
+		}
+
+		// Получаем значения полей (с проверкой индексов)
+		russian := ""
+		english := ""
+		kazakh := ""
+
+		if len(record) > 1 {
+			russian = cleanQuotes(record[1])
+		}
+		if len(record) > 2 {
+			english = cleanQuotes(record[2])
+		}
+		if len(record) > 3 {
+			kazakh = cleanQuotes(record[3])
 		}
 
 		// Создаем запись о переводе
 		translation := models.Translation{
 			ID:      uint(id),
 			Key:     fmt.Sprintf("key_%d", id),
-			Russian: cleanQuotes(parts[1]),
-			English: cleanQuotes(parts[2]),
-			Kazakh:  cleanQuotes(parts[3]),
+			Russian: russian,
+			English: english,
+			Kazakh:  kazakh,
 		}
 
 		// Сохраняем или обновляем запись в базе данных
@@ -149,67 +171,20 @@ func main() {
 				fmt.Printf("Ошибка при создании записи ID=%d: %v\n", id, err)
 				continue
 			}
-			fmt.Printf("Создана новая запись ID=%d: %s\n", id, translation.Russian)
+			fmt.Printf("Создана новая запись ID=%d\n", id)
 		} else {
 			// Запись существует, обновляем ее
 			if err := db.Model(&existing).Updates(translation).Error; err != nil {
 				fmt.Printf("Ошибка при обновлении записи ID=%d: %v\n", id, err)
 				continue
 			}
-			fmt.Printf("Обновлена запись ID=%d: %s\n", id, translation.Russian)
+			fmt.Printf("Обновлена запись ID=%d\n", id)
 		}
 
 		count++
 	}
 
-	// Проверяем наличие ошибок сканирования
-	if err := scanner.Err(); err != nil {
-		fmt.Println("Ошибка при чтении файла:", err)
-	}
-
 	fmt.Printf("\nИмпорт завершен успешно. Всего обработано: %d записей\n", count)
-}
-
-// parseCSVLine разбирает строку CSV с учетом всех возможных форматов
-func parseCSVLine(line string) []string {
-	var result []string
-	var current strings.Builder
-	inQuotes := false
-	doubleQuoteEscape := false
-
-	for i := 0; i < len(line); i++ {
-		char := line[i]
-
-		// Обрабатываем кавычки
-		if char == '"' {
-			// Проверяем на экранированные кавычки
-			if inQuotes && i+1 < len(line) && line[i+1] == '"' {
-				current.WriteByte('"')
-				i++ // Пропускаем следующую кавычку
-				continue
-			}
-			inQuotes = !inQuotes
-			doubleQuoteEscape = (i > 0 && i+1 < len(line) && line[i-1] == '"' && line[i+1] == '"')
-			if doubleQuoteEscape {
-				current.WriteByte('"')
-			}
-			continue
-		}
-
-		// Если встречаем запятую вне кавычек, это разделитель
-		if char == ',' && !inQuotes {
-			result = append(result, current.String())
-			current.Reset()
-			continue
-		}
-
-		// В остальных случаях добавляем символ к текущему полю
-		current.WriteByte(char)
-	}
-
-	// Добавляем последнее поле
-	result = append(result, current.String())
-	return result
 }
 
 // cleanQuotes удаляет лишние кавычки из строки
@@ -217,6 +192,8 @@ func cleanQuotes(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
 		s = s[1 : len(s)-1]
+		// Заменяем двойные кавычки на одинарные внутри текста
+		s = strings.ReplaceAll(s, "\"\"", "\"")
 	}
 	return s
 }
