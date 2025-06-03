@@ -8,31 +8,13 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	"google.golang.org/api/option"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	"google.golang.org/api/option"
 )
 
-// DebugAuth выводит информацию из контекста аутентификации
-func DebugAuth(c *gin.Context) {
-	// Собираем всю информацию из контекста
-	firebaseUID, uidExists := c.Get("firebase_uid")
-	userType, typeExists := c.Get("user_type")
-	claims, claimsExist := c.Get("claims")
-
-	c.JSON(http.StatusOK, gin.H{
-		"firebase_uid_exists": uidExists,
-		"firebase_uid":        firebaseUID,
-		"user_type_exists":    typeExists,
-		"user_type":           userType,
-		"claims_exists":       claimsExist,
-		"claims":              claims,
-		"all_context_keys":    c.Keys,
-	})
-}
-
-// DebugPushNotification отправляет тестовое push-уведомление с полной обработкой ошибок
+// DebugPushNotification отправляет тестовое push-уведомление
 func DebugPushNotification(c *gin.Context) {
 	var request struct {
 		DeviceToken string            `json:"device_token" binding:"required"`
@@ -55,28 +37,57 @@ func DebugPushNotification(c *gin.Context) {
 	// Создаем контекст
 	ctx := context.Background()
 
-	// Проверяем переменные окружения
-	credentialsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	log.Printf("[DEBUG] Using Firebase credentials from: %s", credentialsPath)
-
-	// Инициализируем Firebase App
-	var app *firebase.App
-	var err error
-
-	// Создаем опции Firebase на основе доступных учетных данных
-	var opts []option.ClientOption
-	if credentialsPath != "" {
-		opts = append(opts, option.WithCredentialsFile(credentialsPath))
+	// ====== ВАЖНОЕ ИСПРАВЛЕНИЕ: ДОБАВЛЯЕМ ЯВНУЮ КОНФИГУРАЦИЮ FIREBASE ======
+	// Проверяем переменную окружения PROJECT_ID или берем значение по умолчанию
+	projectID := os.Getenv("FIREBASE_PROJECT_ID")
+	if projectID == "" {
+		projectID = "pinguin-46f73" // Укажите здесь ID вашего проекта Firebase
 	}
 
-	// Создаем Firebase App
-	app, err = firebase.NewApp(ctx, nil, opts...)
+	// Создаем конфигурацию Firebase с явным указанием projectID
+	config := &firebase.Config{
+		ProjectID: projectID,
+	}
+
+	// Создаем опции Firebase
+	var opts []option.ClientOption
+
+	// Проверяем наличие файла учетных данных службы
+	credentialsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credentialsPath != "" {
+		log.Printf("[DEBUG] Using Firebase credentials from file: %s", credentialsPath)
+		opts = append(opts, option.WithCredentialsFile(credentialsPath))
+	} else {
+		// Используем JSON строку из переменной окружения
+		credentialsJSON := os.Getenv("FIREBASE_CREDENTIALS_JSON")
+		if credentialsJSON != "" {
+			log.Printf("[DEBUG] Using Firebase credentials from environment JSON")
+			opts = append(opts, option.WithCredentialsJSON([]byte(credentialsJSON)))
+		} else {
+			// Для локальной разработки можно включить учетные данные прямо в код
+			// (не рекомендуется для production)
+			log.Printf("[DEBUG] No credentials found, using embedded credentials for testing only")
+			// Здесь должен быть JSON сервисного аккаунта, не google-services.json
+			// firebaseCredentials := `{"type":"service_account", ...}`
+			// opts = append(opts, option.WithCredentialsJSON([]byte(firebaseCredentials)))
+
+			// Лучше сообщить об ошибке, чем использовать неправильные учетные данные
+			errMsg := "Firebase service account credentials not found. Please set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_CREDENTIALS_JSON"
+			log.Printf("[ERROR] %s", errMsg)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+			return
+		}
+	}
+
+	// Инициализируем Firebase с явной конфигурацией
+	app, err := firebase.NewApp(ctx, config, opts...)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to initialize Firebase app: %v", err)
 		log.Printf("[ERROR] %s", errMsg)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 		return
 	}
+
 	log.Printf("[DEBUG] Firebase app initialized successfully")
 
 	// Инициализируем FCM клиент
@@ -87,6 +98,7 @@ func DebugPushNotification(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 		return
 	}
+
 	log.Printf("[DEBUG] FCM client initialized successfully")
 
 	// Создаем и отправляем сообщение
@@ -99,7 +111,8 @@ func DebugPushNotification(c *gin.Context) {
 		Token: request.DeviceToken,
 	}
 
-	log.Printf("[DEBUG] Sending notification to token: %s...", request.DeviceToken[:10])
+	log.Printf("[DEBUG] Sending notification to token: %s...",
+		request.DeviceToken[:10])
 
 	// Отправляем сообщение
 	response, err := fcmClient.Send(ctx, message)
@@ -120,6 +133,7 @@ func DebugPushNotification(c *gin.Context) {
 			"response_id":  response,
 			"title":        request.Title,
 			"body":         request.Body,
+			"project_id":   projectID,
 		},
 	})
 }
