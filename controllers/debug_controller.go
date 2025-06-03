@@ -52,7 +52,7 @@ func DebugPushNotification(c *gin.Context) {
 	// Создаем опции Firebase
 	var opts []option.ClientOption
 
-	// Проверяем наличие файла учетных данных службы
+	// Проверяем наличие файла учетных данных службы или переменной окружения
 	credentialsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 	if credentialsPath != "" {
 		log.Printf("[DEBUG] Using Firebase credentials from file: %s", credentialsPath)
@@ -64,18 +64,18 @@ func DebugPushNotification(c *gin.Context) {
 			log.Printf("[DEBUG] Using Firebase credentials from environment JSON")
 			opts = append(opts, option.WithCredentialsJSON([]byte(credentialsJSON)))
 		} else {
-			// Для локальной разработки можно включить учетные данные прямо в код
-			// (не рекомендуется для production)
-			log.Printf("[DEBUG] No credentials found, using embedded credentials for testing only")
-			// Здесь должен быть JSON сервисного аккаунта, не google-services.json
-			// firebaseCredentials := `{"type":"service_account", ...}`
-			// opts = append(opts, option.WithCredentialsJSON([]byte(firebaseCredentials)))
-
-			// Лучше сообщить об ошибке, чем использовать неправильные учетные данные
-			errMsg := "Firebase service account credentials not found. Please set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_CREDENTIALS_JSON"
-			log.Printf("[ERROR] %s", errMsg)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
-			return
+			// Для локального тестирования используем файл из директории проекта
+			defaultPath := "pinguin-46f73-firebase-adminsdk-fbsvc-8610ba7d3e.json"
+			if _, err := os.Stat(defaultPath); err == nil {
+				log.Printf("[DEBUG] Using Firebase credentials from default path: %s", defaultPath)
+				opts = append(opts, option.WithCredentialsFile(defaultPath))
+			} else {
+				// Если не нашли файл, возвращаем ошибку
+				errMsg := "Firebase service account credentials not found. Please set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_CREDENTIALS_JSON"
+				log.Printf("[ERROR] %s", errMsg)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+				return
+			}
 		}
 	}
 
