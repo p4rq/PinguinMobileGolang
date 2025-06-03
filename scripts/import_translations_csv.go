@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	csvPath := filepath.Join(dir, "translate.csv")
+	csvPath := filepath.Join(dir, "translate3.csv")
 	fmt.Printf("Поиск CSV файла по пути: %s\n", csvPath)
 
 	// Открываем CSV файл

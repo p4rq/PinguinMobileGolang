@@ -237,57 +237,6 @@ func ServeWs(c *gin.Context) {
 	client := ws.NewClient(wsHub, conn, userID, parentID, userName)
 	wsHub.RegisterClient(client)
 
-	// Загружаем историю сообщений из БД и отправляем клиенту
-	// if wsHub.MessageService != nil {
-	// 	log.Printf("MessageService available, loading messages for parentID=%s, userID=%s",
-	// 		parentID, userID)
-
-	// 	limit := 50
-	// 	messages, err := wsHub.MessageService.GetMessages(parentID, userID, limit)
-
-	// 	if err != nil {
-	// 		log.Printf("Error loading messages: %v", err)
-	// 		// Отправляем пустую историю в случае ошибки
-	// 		client.Send(ws.WebSocketMessage{
-	// 			Type:      "message_history",
-	// 			ParentID:  parentID,
-	// 			Message:   []interface{}{},
-	// 			Timestamp: time.Time{},
-	// 		})
-	// 	} else {
-	// 		log.Printf("Successfully loaded %d messages for parentID=%s",
-	// 			len(messages), parentID)
-	// 		// Преобразуем сообщения в формат для отправки через WebSocket
-	// 		msgHistory := make([]interface{}, len(messages))
-	// 		for i, msg := range messages {
-	// 			msgHistory[i] = map[string]interface{}{
-	// 				"id":          msg.ID,
-	// 				"sender_id":   msg.SenderID,
-	// 				"sender_name": msg.SenderName,
-	// 				"text":        msg.Message,
-	// 				"time":        msg.CreatedAt,
-	// 			}
-	// 		}
-
-	// 		// Отправляем историю сообщений клиенту
-	// 		client.Send(ws.WebSocketMessage{
-	// 			Type:      "message_history",
-	// 			ParentID:  parentID,
-	// 			Message:   msgHistory,
-	// 			Timestamp: time.Now(),
-	// 		})
-	// 	}
-	// } else {
-	// 	log.Printf("ERROR: MessageService is nil - cannot load message history")
-	// 	// Отправляем пустую историю
-	// 	client.Send(ws.WebSocketMessage{
-	// 		Type:      "message_history",
-	// 		ParentID:  parentID,
-	// 		Message:   []interface{}{},
-	// 		Timestamp: time.Time{},
-	// 	})
-	// }
-
 	// Запускаем горутины для обработки сообщений
 	go client.WritePump()
 	go client.ReadPump()

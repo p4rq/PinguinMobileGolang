@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"PinguinMobile/models"
+	"PinguinMobile/services"
 	"log"
 	"sync"
 	"time"
@@ -41,6 +42,9 @@ type Hub struct {
 
 	// База данных для получения информации о пользователях
 	db *gorm.DB
+
+	// Сервис для отправки уведомлений
+	NotifySrv *services.NotificationService
 }
 
 // ChatMessageService интерфейс для работы с сообщениями чата
@@ -50,13 +54,14 @@ type ChatMessageService interface {
 }
 
 // NewHub создает новый хаб
-func NewHub(messageService ChatMessageService, db *gorm.DB) *Hub {
+func NewHub(messageService ChatMessageService, notifySrv *services.NotificationService, db *gorm.DB) *Hub {
 	return &Hub{
 		clients:        make(map[string]map[*Client]bool),
 		broadcast:      make(chan WebSocketMessage),
 		register:       make(chan *Client),
 		unregister:     make(chan *Client),
 		MessageService: messageService, // Изменено с messageService на MessageService
+		NotifySrv:      notifySrv,
 		db:             db,
 	}
 }
@@ -155,19 +160,57 @@ func (h *Hub) broadcastMessage(message WebSocketMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// Сохраняем список активных пользователей для дальнейшей проверки
+	activeUsers := make(map[string]bool)
+
 	clients, ok := h.clients[message.ParentID]
 	if !ok {
 		log.Printf("Семья %s не найдена, сообщение не доставлено", message.ParentID)
+		h.mu.Unlock()
 		return
 	}
 
 	for client := range clients {
+		// Добавляем пользователя в список активных
+		activeUsers[client.UserID] = true
+
 		select {
 		case client.send <- message: // Исправьте Send на send
 			// Сообщение успешно отправлено
 		default:
 			// Буфер клиента переполнен, отключаем его
 			h.unregisterClient(client)
+		}
+	}
+	h.mu.Unlock()
+
+	// Отправляем push-уведомления пользователям, которые не в сети
+	if message.Type == "chat_message" && h.NotifySrv != nil {
+		// Если это сообщение чата и сервис уведомлений инициализирован
+		if msgText, ok := message.Message.(string); ok {
+			// Найдем всех членов семьи, которые НЕ активны сейчас
+			// и отправим им push-уведомления
+			// Это нужно делать в отдельной горутине, чтобы не блокировать основной поток
+			go func() {
+				// Список пользователей для пропуска (отправитель и активные пользователи)
+				skipUsers := []string{message.SenderID}
+				for u := range activeUsers {
+					skipUsers = append(skipUsers, u)
+				}
+
+				// Отправляем push-уведомления всем членам семьи, кроме активных
+				h.NotifySrv.SendNotificationToFamily(
+					message.ParentID,
+					message.SenderName, // Имя отправителя как заголовок
+					msgText,            // Текст сообщения как тело
+					map[string]string{
+						"notification_type": "chat_message",
+						"sender_id":         message.SenderID,
+						"parent_id":         message.ParentID,
+					},
+					skipUsers...,
+				)
+			}()
 		}
 	}
 }

@@ -429,3 +429,13 @@ func (s *ChildService) IsAppBlocked(childFirebaseUID, appPackage string) (bool, 
 	// Приложение не заблокировано
 	return false, "", nil
 }
+func (s *ChildService) UpdateDeviceToken(firebaseUID, deviceToken string) error {
+	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return err
+	}
+
+	// Обновляем токен устройства
+	child.DeviceToken = deviceToken
+	return s.ChildRepo.Save(child)
+}

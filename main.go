@@ -8,11 +8,14 @@ import (
 	"PinguinMobile/routes"
 	"PinguinMobile/services"
 	"PinguinMobile/websocket"
+	"context"
 	"log"
 	"os"
 
+	firebase "firebase.google.com/go/v4"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"google.golang.org/api/option"
 )
 
 // ChatServiceAdapter адаптирует ChatService для соответствия интерфейсу ChatMessageService
@@ -85,22 +88,51 @@ func main() {
 	// Initialize services
 	authService := services.NewAuthService(parentRepo, childRepo, config.FirebaseAuth)
 	childService := services.NewChildService(childRepo, parentRepo, config.FirebaseAuth)
-	parentService := services.NewParentService(parentRepo, childRepo)
 	chatService := services.NewChatService(chatRepo, parentRepo, childRepo)
-	translationService := services.NewTranslationService(config.DB)
 
 	// Set services in controllers
 	controllers.SetAuthService(authService)
 	controllers.SetChildService(childService)
-	controllers.SetParentService(parentService)
 	controllers.SetChatService(chatService)
+
+	// Инициализируем Firebase app
+	opt := option.WithCredentialsFile(os.Getenv("FIREBASE_CREDENTIALS_PATH"))
+	firebaseApp, err := firebase.NewApp(context.Background(), nil, opt)
+	if err != nil {
+		log.Fatalf("Error initializing Firebase: %v", err)
+	}
+
+	// Инициализируем сервисы
+	translationService := services.NewTranslationService(config.DB)
 	controllers.SetTranslationService(translationService)
 
-	// Инициализация WebSocket Hub с адаптером и доступом к БД
-	chatAdapter := &ChatServiceAdapter{chatService: chatService}
-	webSocketHub := websocket.NewHub(chatAdapter, config.DB)
-	go webSocketHub.Run()
-	controllers.SetWebSocketHub(webSocketHub)
+	// Инициализируем сервис уведомлений
+	notificationService, err := services.NewNotificationService(
+		firebaseApp,
+		translationService,
+		parentRepo,
+		childRepo,
+	)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize notification service: %v", err)
+		notificationService = nil
+	} else {
+		log.Println("Notification service initialized successfully")
+	}
+
+	// Передаем сервис уведомлений другим сервисам
+	parentService := services.NewParentService(parentRepo, childRepo, notificationService)
+	controllers.SetParentService(parentService)
+
+	// 1. Создаем адаптер для ChatService
+	chatAdapter := &ChatServiceAdapter{
+		chatService: chatService,
+	}
+
+	// 2. Инициализация WebSocket Hub с правильным количеством аргументов
+	wsHub := websocket.NewHub(chatAdapter, notificationService, config.DB)
+	go wsHub.Run()
+	controllers.SetWebSocketHub(wsHub)
 
 	// Initialize Gin router
 	r := gin.Default()

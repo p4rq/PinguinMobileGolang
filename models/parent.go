@@ -19,6 +19,7 @@ type Parent struct {
 
 	PasswordResetCode          string    `json:"-" gorm:"size:10"`
 	PasswordResetCodeExpiresAt time.Time `json:"-"`
+	DeviceToken                string    `json:"device_token" gorm:"type:text"`
 }
 
 func (p *Parent) IsCodeValid() bool {

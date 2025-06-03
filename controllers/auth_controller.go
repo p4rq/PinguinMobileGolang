@@ -151,8 +151,9 @@ func RegisterParent(c *gin.Context) {
 
 func LoginParent(c *gin.Context) {
 	var input struct {
-		Email    string `json:"email" binding:"required"`
-		Password string `json:"password" binding:"required"`
+		Email       string `json:"email" binding:"required"`
+		Password    string `json:"password" binding:"required"`
+		DeviceToken string `json:"device_token"` // Добавляем поле для токена устройства
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -165,6 +166,7 @@ func LoginParent(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+
 	// Проверяем, подтвержден ли email
 	if !parent.EmailVerified {
 		c.JSON(http.StatusForbidden, gin.H{
@@ -175,9 +177,24 @@ func LoginParent(c *gin.Context) {
 		})
 		return
 	}
+
+	// Обновляем токен устройства, если он предоставлен
+	if input.DeviceToken != "" && parent.DeviceToken != input.DeviceToken {
+		err := parentService.UpdateDeviceToken(parent.FirebaseUID, input.DeviceToken)
+		if err != nil {
+			fmt.Printf("Error updating device token: %v\n", err)
+			// Продолжаем выполнение, даже если обновление не удалось
+		} else {
+			// Получаем обновленные данные родителя
+			updatedParent, err := parentService.ReadParent(parent.FirebaseUID)
+			if err == nil {
+				parent = updatedParent // Используем обновленного родителя в ответе
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": parent})
 }
-
 func RegisterChild(c *gin.Context) {
 	var input struct {
 		Lang string `json:"lang" binding:"required"`
@@ -418,6 +435,7 @@ func TokenVerify(c *gin.Context) {
 					"code":              child.Code,
 					"blocks":            allBlocks,
 					"translations_info": translationInfo, // Добавляем информацию о переводах
+					"device_token":      child.DeviceToken,
 				},
 			})
 			return
@@ -448,6 +466,7 @@ func TokenVerify(c *gin.Context) {
 				"code":              parent.Code,
 				"code_expires_at":   parent.CodeExpiresAt,
 				"translations_info": translationInfo,
+				"device_token":      parent.DeviceToken,
 			},
 		})
 		return
@@ -475,7 +494,8 @@ func TokenVerify(c *gin.Context) {
 // LoginChild logs in a child using their code
 func LoginChild(c *gin.Context) {
 	var input struct {
-		Code string `json:"code" binding:"required"`
+		Code        string `json:"code" binding:"required"`
+		DeviceToken string `json:"device_token"` // Добавляем поле для токена устройства
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -487,6 +507,21 @@ func LoginChild(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Обновляем токен устройства, если он предоставлен
+	if input.DeviceToken != "" && child.DeviceToken != input.DeviceToken {
+		err := childService.UpdateDeviceToken(child.FirebaseUID, input.DeviceToken)
+		if err != nil {
+			fmt.Printf("Error updating device token: %v\n", err)
+			// Продолжаем выполнение, даже если обновление не удалось
+		} else {
+			// Получаем обновленные данные ребенка
+			updatedChild, err := childService.ReadChild(child.FirebaseUID)
+			if err == nil {
+				child = updatedChild // Используем обновленного ребенка в ответе
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": child})

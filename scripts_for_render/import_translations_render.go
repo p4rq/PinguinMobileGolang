@@ -22,7 +22,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	csvPath := filepath.Join(dir, "translate.csv")
+	csvPath := filepath.Join(dir, "translate4.csv")
 	fmt.Printf("Поиск CSV файла по пути: %s\n", csvPath)
 
 	// Открываем CSV файл
@@ -175,10 +175,16 @@ func main() {
 // cleanQuotes удаляет лишние кавычки из строки
 func cleanQuotes(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+
+	// Обработка тройных кавычек
+	if len(s) >= 6 && strings.HasPrefix(s, "\"\"\"") && strings.HasSuffix(s, "\"\"\"") {
+		s = s[3 : len(s)-3]
+	} else if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		// Обычные кавычки
 		s = s[1 : len(s)-1]
-		// Заменяем двойные кавычки на одинарные внутри текста
-		s = strings.ReplaceAll(s, "\"\"", "\"")
 	}
+
+	// Замена двойных кавычек на одинарные
+	s = strings.ReplaceAll(s, "\"\"", "\"")
 	return s
 }

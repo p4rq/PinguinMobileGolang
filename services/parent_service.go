@@ -16,10 +16,15 @@ import (
 type ParentService struct {
 	ParentRepo repositories.ParentRepository
 	ChildRepo  repositories.ChildRepository
+	NotifySrv  *NotificationService
 }
 
-func NewParentService(parentRepo repositories.ParentRepository, childRepo repositories.ChildRepository) *ParentService {
-	return &ParentService{ParentRepo: parentRepo, ChildRepo: childRepo}
+func NewParentService(parentRepo repositories.ParentRepository, childRepo repositories.ChildRepository, notifySrv *NotificationService) *ParentService {
+	return &ParentService{
+		ParentRepo: parentRepo,
+		ChildRepo:  childRepo,
+		NotifySrv:  notifySrv,
+	}
 }
 
 func (s *ParentService) ReadParent(firebaseUID string) (models.Parent, error) {
@@ -475,8 +480,69 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	if err := s.ChildRepo.AddTimeBlockedApps(child.ID, allBlocks); err != nil {
 		return nil, err
 	}
+	if s.NotifySrv != nil && len(newBlocks) > 0 {
+		// Получаем данные ребенка для отправки уведомления
+		child, err := s.ChildRepo.FindByFirebaseUID(request.ChildFirebaseUID)
+		if err == nil && child.DeviceToken != "" {
+			// Формируем заголовок и содержание уведомления
+			var title, body string
 
-	// Возвращаем созданные блокировки
+			if request.DurationMins == 0 {
+				// Постоянная блокировка
+				title = "Постоянная блокировка"
+
+				if len(request.AppPackages) == 1 {
+					body = "Приложение заблокировано навсегда"
+				} else {
+					body = fmt.Sprintf("%d приложений заблокированы навсегда", len(request.AppPackages))
+				}
+			} else {
+				// Временная блокировка
+				title = "Временная блокировка"
+
+				if len(request.AppPackages) == 1 {
+					body = fmt.Sprintf("Приложение заблокировано на %s", formatDuration(request.DurationMins))
+				} else {
+					body = fmt.Sprintf("%d приложений заблокированы на %s",
+						len(request.AppPackages), formatDuration(request.DurationMins))
+				}
+			}
+
+			// Добавляем название блокировки, если указано
+			if request.BlockName != "" {
+				body += fmt.Sprintf(" (%s)", request.BlockName)
+			}
+
+			// Дополнительные данные для мобильного приложения
+			data := map[string]string{
+				"notification_type": "one_time_block",
+				"apps_count":        fmt.Sprintf("%d", len(request.AppPackages)),
+				"duration_mins":     fmt.Sprintf("%d", request.DurationMins),
+				"block_name":        request.BlockName,
+				"is_permanent":      fmt.Sprintf("%t", request.DurationMins == 0),
+				"first_block_id":    fmt.Sprintf("%d", newBlocks[0].ID),
+			}
+
+			// Асинхронно отправляем уведомление
+			go func() {
+				err := s.NotifySrv.SendNotification(child.DeviceToken, title, body, data, child.Lang)
+				if err != nil {
+					fmt.Printf("[PUSH] Ошибка отправки уведомления о временной блокировке: %v\n", err)
+				} else {
+					fmt.Printf("[PUSH] Успешно отправлено уведомление о %s блокировке для %d приложений\n",
+						func() string {
+							if request.DurationMins == 0 {
+								return "постоянной"
+							}
+							return "временной"
+						}(), len(request.AppPackages))
+				}
+			}()
+		} else if child.DeviceToken == "" {
+			fmt.Printf("[PUSH] Невозможно отправить уведомление: DeviceToken пустой\n")
+		}
+	}
+
 	return newBlocks, nil
 }
 
@@ -635,6 +701,64 @@ func (s *ParentService) CancelOneTimeBlocksByIDs(parentUID, childUID string, blo
 			updatedBlocks = append(updatedBlocks, block)
 		}
 	}
+	if len(blockIDs) > 0 && s.NotifySrv != nil {
+		child, err := s.ChildRepo.FindByFirebaseUID(childUID)
+		if err == nil && child.DeviceToken != "" {
+			// Формируем списки удаляемых приложений и их имена для уведомления
+			var removedApps []string
+			blockName := ""
+
+			// Получаем названия приложений из блоков
+			for _, block := range existingBlocks {
+				for _, id := range blockIDs {
+					if block.ID == id {
+						removedApps = append(removedApps, block.AppPackage)
+						if blockName == "" && block.BlockName != "" {
+							blockName = block.BlockName
+						}
+						break
+					}
+				}
+			}
+
+			// Формируем уведомление
+			title := "Блокировка отменена"
+			var body string
+
+			if len(removedApps) == 1 {
+				body = "Временная блокировка приложения отменена"
+			} else if len(removedApps) > 1 {
+				body = fmt.Sprintf("Временная блокировка %d приложений отменена", len(removedApps))
+			} else {
+				body = "Блокировка отменена"
+			}
+
+			// Добавляем название блокировки, если есть
+			if blockName != "" {
+				body += fmt.Sprintf(" (%s)", blockName)
+			}
+
+			// Дополнительные данные для мобильного приложения
+			data := map[string]string{
+				"notification_type": "one_time_unblock_by_id",
+				"blocks_count":      fmt.Sprintf("%d", len(blockIDs)),
+				"apps_count":        fmt.Sprintf("%d", len(removedApps)),
+				"block_name":        blockName,
+			}
+
+			// Асинхронно отправляем уведомление
+			go func() {
+				err := s.NotifySrv.SendNotification(child.DeviceToken, title, body, data, child.Lang)
+				if err != nil {
+					fmt.Printf("[PUSH] Ошибка отправки уведомления об отмене блокировки: %v\n", err)
+				} else {
+					fmt.Printf("[PUSH] Успешно отправлено уведомление об отмене блокировки по ID\n")
+				}
+			}()
+		} else if child.DeviceToken == "" {
+			fmt.Printf("[PUSH] Невозможно отправить уведомление: DeviceToken пустой\n")
+		}
+	}
 
 	// Сохраняем обновленный список
 	return s.SaveOneTimeBlocksToDB(child.ID, updatedBlocks)
@@ -713,6 +837,9 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 	if !s.isChildInFamily(parent, childUID) {
 		return errors.New("child does not belong to this parent")
 	}
+
+	// Переменная для отслеживания результата операции
+	var operationResult error
 
 	if action == "block" {
 		// Получаем существующие блокировки
@@ -794,7 +921,55 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 		updatedBlocks := append(existingBlocks, newBlocks...)
 
 		// Сохраняем обновленный список блоков
-		return s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+		operationResult = s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+
+		// Отправляем push-уведомление после успешного добавления расписания блокировки
+		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" {
+			// Формируем заголовок и содержание уведомления
+			title := "Новое расписание блокировки"
+			var body string
+
+			if len(apps) == 1 {
+				body = "Добавлено расписание блокировки приложения"
+			} else {
+				body = fmt.Sprintf("Добавлено расписание блокировки %d приложений", len(apps))
+			}
+
+			// Добавляем информацию о времени
+			if startTime != "" && endTime != "" {
+				body += fmt.Sprintf(" с %s до %s", startTime, endTime)
+			}
+
+			// Добавляем название расписания, если оно задано
+			if blockName != "" {
+				body += fmt.Sprintf(" (%s)", blockName)
+			}
+
+			// Дополнительные данные для мобильного приложения
+			data := map[string]string{
+				"notification_type": "time_rule_block",
+				"apps_count":        fmt.Sprintf("%d", len(apps)),
+				"block_name":        blockName,
+				"start_time":        startTime,
+				"end_time":          endTime,
+				"rule_id":           fmt.Sprintf("%d", blockID-1), // ID первого блока в группе
+			}
+
+			// Асинхронно отправляем уведомление
+			go func() {
+				err := s.NotifySrv.SendNotification(child.DeviceToken, title, body, data, child.Lang)
+				if err != nil {
+					fmt.Printf("[PUSH] Ошибка отправки уведомления о блокировке: %v\n", err)
+				} else {
+					fmt.Printf("[PUSH] Успешно отправлено уведомление о блокировке для %d приложений\n", len(apps))
+				}
+			}()
+		} else if s.NotifySrv == nil {
+			fmt.Println("[PUSH] NotifyService не инициализирован")
+		} else if child.DeviceToken == "" {
+			fmt.Println("[PUSH] DeviceToken ребенка пустой")
+		}
+
 	} else if action == "unblock" {
 		// Получение существующих блоков
 		existingBlocks, err := s.ChildRepo.GetTimeBlockedApps(child.ID)
@@ -815,7 +990,21 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 
 		// Теперь ищем все блоки, которые принадлежат к тем же группам
 		var groupKeysToRemove []string
+		removedAppPackages := make(map[string]bool)
+		removedBlockName := ""
+		var removedStartTime, removedEndTime string
+
 		for _, blockToRemove := range blocksToRemove {
+			// Запоминаем название блока для уведомления
+			if removedBlockName == "" {
+				removedBlockName = blockToRemove.BlockName
+				removedStartTime = blockToRemove.StartTime
+				removedEndTime = blockToRemove.EndTime
+			}
+
+			// Запоминаем пакеты приложений для уведомления
+			removedAppPackages[blockToRemove.AppPackage] = true
+
 			// Создаем ключ группы
 			groupKey := fmt.Sprintf("%s_%s_%s_%s",
 				blockToRemove.StartTime,
@@ -854,10 +1043,53 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 			return err
 		}
 
-		return s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+		operationResult = s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+
+		// Отправляем push-уведомление после успешного удаления расписания блокировки
+		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" && len(removedAppPackages) > 0 {
+			// Формируем заголовок и содержание уведомления
+			title := "Расписание блокировки отменено"
+			var body string
+
+			if len(removedAppPackages) == 1 {
+				body = "Расписание блокировки приложения отменено"
+			} else {
+				body = fmt.Sprintf("Расписание блокировки %d приложений отменено", len(removedAppPackages))
+			}
+
+			// Добавляем информацию о времени
+			if removedStartTime != "" && removedEndTime != "" {
+				body += fmt.Sprintf(" с %s до %s", removedStartTime, removedEndTime)
+			}
+
+			// Добавляем название расписания, если оно задано
+			if removedBlockName != "" {
+				body += fmt.Sprintf(" (%s)", removedBlockName)
+			}
+
+			// Дополнительные данные для мобильного приложения
+			data := map[string]string{
+				"notification_type": "time_rule_unblock",
+				"apps_count":        fmt.Sprintf("%d", len(removedAppPackages)),
+				"block_name":        removedBlockName,
+				"start_time":        removedStartTime,
+				"end_time":          removedEndTime,
+			}
+
+			// Асинхронно отправляем уведомление
+			go func() {
+				err := s.NotifySrv.SendNotification(child.DeviceToken, title, body, data, child.Lang)
+				if err != nil {
+					fmt.Printf("[PUSH] Ошибка отправки уведомления об отмене блокировки: %v\n", err)
+				} else {
+					fmt.Printf("[PUSH] Успешно отправлено уведомление об отмене блокировки для %d приложений\n",
+						len(removedAppPackages))
+				}
+			}()
+		}
 	}
 
-	return nil
+	return operationResult
 }
 
 // BlockAppsWithMultipleTimeRanges блокирует приложения с несколькими временными интервалами
@@ -1257,4 +1489,17 @@ func (s *ParentService) ChangePassword(firebaseUID, currentPassword, newPassword
 	}
 
 	return nil
+}
+func (s *ParentService) UpdateDeviceToken(firebaseUID, deviceToken string) error {
+	// Находим родителя по Firebase UID
+	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return fmt.Errorf("parent not found: %w", err)
+	}
+
+	// Обновляем токен устройства
+	parent.DeviceToken = deviceToken
+
+	// Сохраняем обновленную запись
+	return s.ParentRepo.Save(parent)
 }
