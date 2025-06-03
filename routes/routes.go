@@ -22,8 +22,8 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/auth/resend-verification", middlewares.AuthMiddleware(), controllers.ResendVerificationCode)
 	r.DELETE("/:firebase_uid", controllers.DeleteParent)
 	r.POST("/auth/forgot-password", controllers.ForgotPassword)
-	r.POST("/auth/reset-password", controllers.ResetPassword)                                 // По коду из email
-	r.POST("/auth/change-password", middlewares.AuthMiddleware(), controllers.ChangePassword) // Если пользователь авторизован
+	r.POST("/auth/reset-password", controllers.ResetPassword)
+	r.POST("/auth/change-password", middlewares.AuthMiddleware(), controllers.ChangePassword)
 
 	// Protected routes
 	parents := r.Group("/parents")
@@ -34,7 +34,7 @@ func RegisterRoutes(r *gin.Engine) {
 		// parents.DELETE("/:firebase_uid", controllers.DeleteParent)
 		// parents.POST("/block/apps", controllers.BlockApps)
 		// parents.POST("/unblock/apps", controllers.UnblockApps)
-
+		parents.POST("/test-push", controllers.TestPushNotification)
 		// Новые маршруты для временной блокировки
 		parents.GET("/block/apps/time/:firebase_uid", controllers.GetTimeBlockedApps)
 		parents.POST("/apps/time-rules", controllers.ManageAppTimeRules)
