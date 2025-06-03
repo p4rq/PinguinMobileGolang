@@ -24,7 +24,7 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/auth/forgot-password", controllers.ForgotPassword)
 	r.POST("/auth/reset-password", controllers.ResetPassword)
 	r.POST("/auth/change-password", middlewares.AuthMiddleware(), controllers.ChangePassword)
-
+	r.POST("/debug/test-push", controllers.DebugPushNotification)
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())
@@ -34,7 +34,6 @@ func RegisterRoutes(r *gin.Engine) {
 		// parents.DELETE("/:firebase_uid", controllers.DeleteParent)
 		// parents.POST("/block/apps", controllers.BlockApps)
 		// parents.POST("/unblock/apps", controllers.UnblockApps)
-		parents.POST("/test-push", controllers.TestPushNotification)
 		// Новые маршруты для временной блокировки
 		parents.GET("/block/apps/time/:firebase_uid", controllers.GetTimeBlockedApps)
 		parents.POST("/apps/time-rules", controllers.ManageAppTimeRules)

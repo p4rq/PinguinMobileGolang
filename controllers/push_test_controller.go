@@ -11,6 +11,14 @@ import (
 
 // TestPushNotification отправляет тестовое push-уведомление указанному пользователю
 func TestPushNotification(c *gin.Context) {
+	// Восстановление от паники
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] Recovered in TestPushNotification: %v", r)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		}
+	}()
+
 	// Получаем данные текущего пользователя из JWT
 	claims, exists := c.Get("claims")
 	if !exists {
@@ -31,9 +39,30 @@ func TestPushNotification(c *gin.Context) {
 		return
 	}
 
-	// Получаем сервисы
-	parentService := c.MustGet("parentService").(*services.ParentService)
-	notifyService := c.MustGet("notificationService").(*services.NotificationService)
+	// Безопасное получение сервисов
+	parentServiceInterface, exists := c.Get("parentService")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Parent service not found in context"})
+		return
+	}
+
+	notifyServiceInterface, exists := c.Get("notificationService")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Notification service not found in context"})
+		return
+	}
+
+	parentService, ok := parentServiceInterface.(*services.ParentService)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid parent service type"})
+		return
+	}
+
+	notifyService, ok := notifyServiceInterface.(*services.NotificationService)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid notification service type"})
+		return
+	}
 
 	// Логируем действие
 	log.Printf("[PUSH-TEST] User %s is sending test notification to %s",
