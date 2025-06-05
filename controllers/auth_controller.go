@@ -472,7 +472,7 @@ func TokenVerify(c *gin.Context) {
 		return
 	}
 
-	// Для других типов пользователей
+	// Для других типов пользователей или ребенка с пустым TimeBlockedApps
 	// Определяем translationInfo для всех остальных типов пользователей
 	lastUpdateTime, err := translationService.GetLastUpdateTime()
 	if err != nil {
@@ -484,11 +484,50 @@ func TokenVerify(c *gin.Context) {
 		"langUpdate":    true,
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":           true,
-		"user":              user,
-		"translations_info": translationInfo,
-	})
+	// Проверяем, является ли пользователь ребенком с пустым TimeBlockedApps
+	if isChild {
+		// Для ребенка, но без блоков приложений
+		c.JSON(http.StatusOK, gin.H{
+			"message": true,
+			"user": gin.H{
+				"id":                child.ID,
+				"role":              child.Role,
+				"lang":              child.Lang,
+				"name":              child.Name,
+				"family":            child.Family,
+				"firebase_uid":      child.FirebaseUID,
+				"is_binded":         child.IsBinded,
+				"usage_data":        child.UsageData,
+				"gender":            child.Gender,
+				"age":               child.Age,
+				"birthday":          child.Birthday,
+				"code":              child.Code,
+				"blocks":            []interface{}{}, // Пустой массив блоков
+				"translations_info": translationInfo, // Внутри user
+				"device_token":      child.DeviceToken,
+			},
+		})
+	} else {
+		// Для других типов пользователей
+
+		// Преобразуем user в map[string]interface{} для добавления translations_info
+		userMap := gin.H{}
+
+		// Базовый вариант для неструктурированных данных
+		// Если это JSON-совместимый тип, Marshal затем Unmarshal
+		jsonData, err := json.Marshal(user)
+		if err == nil {
+			json.Unmarshal(jsonData, &userMap)
+		}
+
+		// Добавляем информацию о переводах
+		userMap["translations_info"] = translationInfo
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": true,
+			"user":    userMap,
+		})
+	}
 }
 
 // LoginChild logs in a child using their code
