@@ -52,11 +52,20 @@ func DeleteChild(c *gin.Context) {
 
 func LogoutChild(c *gin.Context) {
 	firebaseUID := c.Param("firebase_uid")
-	child, err := childService.LogoutChild(firebaseUID)
+
+	// Получаем дополнительные параметры от клиента, если нужно
+	var request struct {
+		Reason string `json:"reason"`
+	}
+	c.ShouldBindJSON(&request) // Игнорируем ошибки, так как параметры необязательные
+
+	// Вызываем сервис для выхода ребенка с отправкой уведомления родителю
+	child, err := childService.LogoutChild(firebaseUID, request.Reason)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
 	c.JSON(http.StatusOK, child)
 }
 

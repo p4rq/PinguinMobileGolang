@@ -17,10 +17,21 @@ type ChildService struct {
 	ChildRepo    repositories.ChildRepository
 	ParentRepo   repositories.ParentRepository
 	FirebaseAuth *auth.Client
+	NotifySrv    *NotificationService // Добавляем поле для сервиса уведомлений
 }
 
-func NewChildService(childRepo repositories.ChildRepository, parentRepo repositories.ParentRepository, firebaseAuth *auth.Client) *ChildService {
-	return &ChildService{ChildRepo: childRepo, ParentRepo: parentRepo, FirebaseAuth: firebaseAuth}
+func NewChildService(
+	childRepo repositories.ChildRepository,
+	parentRepo repositories.ParentRepository,
+	firebaseAuth *auth.Client,
+	notifySrv *NotificationService, // Добавляем параметр
+) *ChildService {
+	return &ChildService{
+		ChildRepo:    childRepo,
+		ParentRepo:   parentRepo,
+		FirebaseAuth: firebaseAuth,
+		NotifySrv:    notifySrv,
+	}
 }
 
 func (s *ChildService) ReadChild(firebaseUID string) (models.Child, error) {
@@ -122,12 +133,17 @@ func (s *ChildService) DeleteChild(firebaseUID string) error {
 	return nil
 }
 
-func (s *ChildService) LogoutChild(firebaseUID string) (models.Child, error) {
+// Обновляем метод LogoutChild чтобы принимать причину выхода и отправлять уведомление
+func (s *ChildService) LogoutChild(firebaseUID string, reason string) (models.Child, error) {
 	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
 	if err != nil {
 		return models.Child{}, err
 	}
 
+	// Запоминаем старый токен и очищаем его при выходе
+	child.DeviceToken = ""
+
+	// Устанавливаем флаг isBinded в false
 	child.IsBinded = false
 	if err := s.ChildRepo.Save(child); err != nil {
 		return models.Child{}, err
@@ -152,7 +168,9 @@ func (s *ChildService) LogoutChild(firebaseUID string) (models.Child, error) {
 		}
 
 		for i, member := range family {
-			if uint(member["child_id"].(float64)) == child.ID {
+			// Используем более гибкий поиск по child_id
+			childID, ok := member["child_id"].(float64)
+			if ok && uint(childID) == child.ID {
 				member["isBinded"] = false
 				family[i] = member
 				break
@@ -162,6 +180,47 @@ func (s *ChildService) LogoutChild(firebaseUID string) (models.Child, error) {
 		familyJSON, _ := json.Marshal(family)
 		parent.Family = string(familyJSON)
 		s.ParentRepo.Save(parent)
+
+		// Отправляем уведомление родителю, если доступен сервис уведомлений
+		if s.NotifySrv != nil && parent.DeviceToken != "" {
+			// Формируем заголовок и тело уведомления
+			title := "Ребенок вышел из приложения"
+			body := fmt.Sprintf("%s вышел из приложения Pinguin", child.Name)
+
+			// Если указана причина выхода, добавляем её в сообщение
+			if reason != "" {
+				body += fmt.Sprintf(" (причина: %s)", reason)
+			}
+
+			// Дополнительные данные для уведомления
+			data := map[string]string{
+				"notification_type":  "child_logout",
+				"child_name":         child.Name,
+				"child_id":           fmt.Sprintf("%d", child.ID),
+				"child_firebase_uid": child.FirebaseUID,
+				"timestamp":          fmt.Sprintf("%d", time.Now().Unix()),
+			}
+
+			// Асинхронно отправляем уведомление родителю
+			go func() {
+				err := s.NotifySrv.SendNotification(
+					parent.DeviceToken,
+					title,
+					body,
+					data,
+					parent.Lang, // Используем язык родителя для перевода
+				)
+
+				// Логирование результата отправки
+				if err != nil {
+					fmt.Printf("[PUSH ERROR] Failed to send child logout notification to parent %s: %v\n",
+						parentFirebaseUID, err)
+				} else {
+					fmt.Printf("[PUSH SUCCESS] Sent child logout notification to parent %s\n",
+						parentFirebaseUID)
+				}
+			}()
+		}
 	}
 
 	return child, nil

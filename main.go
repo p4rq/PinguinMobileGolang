@@ -87,13 +87,7 @@ func main() {
 
 	// Initialize services
 	authService := services.NewAuthService(parentRepo, childRepo, config.FirebaseAuth)
-	childService := services.NewChildService(childRepo, parentRepo, config.FirebaseAuth)
 	chatService := services.NewChatService(chatRepo, parentRepo, childRepo)
-
-	// Set services in controllers
-	controllers.SetAuthService(authService)
-	controllers.SetChildService(childService)
-	controllers.SetChatService(chatService)
 
 	// Инициализируем Firebase app
 	opt := option.WithCredentialsFile(os.Getenv("FIREBASE_CREDENTIALS_PATH"))
@@ -104,9 +98,6 @@ func main() {
 
 	// Инициализируем сервисы
 	translationService := services.NewTranslationService(config.DB)
-	controllers.SetTranslationService(translationService)
-
-	// Инициализируем сервис уведомлений
 	notificationService, err := services.NewNotificationService(
 		firebaseApp,
 		translationService,
@@ -120,9 +111,16 @@ func main() {
 		log.Println("Notification service initialized successfully")
 	}
 
-	// Передаем сервис уведомлений другим сервисам
+	// Теперь инициализируйте сервисы, зависящие от notificationService
+	childService := services.NewChildService(childRepo, parentRepo, config.FirebaseAuth, notificationService)
 	parentService := services.NewParentService(parentRepo, childRepo, notificationService)
+
+	// Set services in controllers
+	controllers.SetAuthService(authService)
+	controllers.SetChildService(childService)
 	controllers.SetParentService(parentService)
+	controllers.SetChatService(chatService)
+	controllers.SetTranslationService(translationService)
 
 	// 1. Создаем адаптер для ChatService
 	chatAdapter := &ChatServiceAdapter{
