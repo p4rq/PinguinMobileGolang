@@ -97,8 +97,8 @@ func MonitorChild(c *gin.Context) {
 
 func RebindChild(c *gin.Context) {
 	var request struct {
-		Code              string `json:"code" binding:"required"`
-		ParentFirebaseUID string `json:"parentFirebaseUID" binding:"required"`
+		Code string `json:"code" binding:"required"`
+		// Удаляем обязательный параметр ParentFirebaseUID
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -106,7 +106,7 @@ func RebindChild(c *gin.Context) {
 		return
 	}
 
-	child, err := childService.RebindChild(request.Code, request.ParentFirebaseUID)
+	child, err := childService.RebindChild(request.Code)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

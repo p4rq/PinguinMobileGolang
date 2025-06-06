@@ -267,77 +267,105 @@ func (s *ChildService) MonitorChild(childFirebaseUID string, sessions []models.S
 	return nil
 }
 
-func (s *ChildService) RebindChild(childCode, parentFirebaseUID string) (models.Child, error) {
-	child, err := s.ChildRepo.FindByCode(childCode)
+// RebindChild связывает ребенка с родителем только по коду
+func (s *ChildService) RebindChild(code string) (models.Child, error) {
+	// Ищем ребенка по коду
+	child, err := s.ChildRepo.FindByCode(code)
 	if err != nil {
-		return models.Child{}, err
+		return models.Child{}, fmt.Errorf("child with code %s not found: %w", code, err)
 	}
 
+	// Если ребенок не связан с родителем, это ошибка
+	if child.Family == "" {
+		return models.Child{}, fmt.Errorf("child with code %s has no family information", code)
+	}
+
+	// Распаковываем информацию о родителе из family JSON
+	var familyData map[string]interface{}
+	if err := json.Unmarshal([]byte(child.Family), &familyData); err != nil {
+		return models.Child{}, fmt.Errorf("invalid family data: %w", err)
+	}
+
+	// Извлекаем parent_firebase_uid из family JSON
+	parentFirebaseUID, ok := familyData["parent_firebase_uid"].(string)
+	if !ok || parentFirebaseUID == "" {
+		return models.Child{}, fmt.Errorf("parent_firebase_uid not found in family data")
+	}
+
+	// Ищем родителя по FirebaseUID
 	parent, err := s.ParentRepo.FindByFirebaseUID(parentFirebaseUID)
 	if err != nil {
-		return models.Child{}, err
+		return models.Child{}, fmt.Errorf("parent not found: %w", err)
 	}
 
+	// Устанавливаем флаг isBinded в true
 	child.IsBinded = true
-	familyData := map[string]interface{}{
-		"parent_id":           parent.ID,
-		"parent_name":         parent.Name,
-		"parent_email":        parent.Email,
-		"parent_firebase_uid": parent.FirebaseUID,
-	}
-	familyJSON, err := json.Marshal(familyData)
-	if err != nil {
-		return models.Child{}, err
-	}
-	child.Family = string(familyJSON)
 	if err := s.ChildRepo.Save(child); err != nil {
-		return models.Child{}, err
+		return models.Child{}, fmt.Errorf("failed to save child: %w", err)
 	}
 
-	var family []map[string]interface{}
-	if err := json.Unmarshal([]byte(parent.Family), &family); err != nil {
-		return models.Child{}, err
+	// Обновляем семью родителя, если нужно
+	var familyArray []map[string]interface{}
+	if parent.Family != "" {
+		if err := json.Unmarshal([]byte(parent.Family), &familyArray); err != nil {
+			return models.Child{}, fmt.Errorf("failed to parse parent's family: %w", err)
+		}
 	}
 
-	// Check if the child entry exists in the family slice
-	childExists := false
-	for i, member := range family {
-		if uint(member["child_id"].(float64)) == child.ID {
-			family[i] = map[string]interface{}{
-				"child_id":     child.ID,
-				"name":         child.Name,
-				"lang":         child.Lang,
-				"gender":       child.Gender,
-				"age":          child.Age,
-				"birthday":     child.Birthday,
-				"firebase_uid": child.FirebaseUID,
-				"isBinded":     true,
-				"code":         child.Code,
-			}
-			childExists = true
+	// Проверяем, есть ли этот ребенок уже в семье родителя
+	childFound := false
+	for i, member := range familyArray {
+		childID, ok := member["child_id"].(float64)
+		if ok && uint(childID) == child.ID {
+			// Обновляем статус связи
+			member["isBinded"] = true
+			familyArray[i] = member
+			childFound = true
 			break
 		}
 	}
 
-	// If the child entry does not exist, add a new entry
-	if !childExists {
-		family = append(family, map[string]interface{}{
-			"child_id":     child.ID,
+	// Если ребенка нет в семье родителя, добавляем его
+	if !childFound {
+		// Создаем информацию о ребенке для родителя
+		childInfo := map[string]interface{}{
+			"child_id":     float64(child.ID),
 			"name":         child.Name,
-			"lang":         child.Lang,
+			"firebase_uid": child.FirebaseUID,
+			"isBinded":     true,
 			"gender":       child.Gender,
 			"age":          child.Age,
 			"birthday":     child.Birthday,
-			"firebase_uid": child.FirebaseUID,
-			"isBinded":     true,
-			"code":         child.Code,
-		})
+		}
+		familyArray = append(familyArray, childInfo)
 	}
 
-	familyJSON, _ = json.Marshal(family)
+	// Сохраняем обновленную семью родителя
+	familyJSON, _ := json.Marshal(familyArray)
 	parent.Family = string(familyJSON)
 	if err := s.ParentRepo.Save(parent); err != nil {
-		return models.Child{}, err
+		return models.Child{}, fmt.Errorf("failed to update parent: %w", err)
+	}
+
+	// Отправляем уведомление родителю, если у нас есть сервис уведомлений
+	if s.NotifySrv != nil && parent.DeviceToken != "" {
+		title := "Повторное подключение устройства"
+		body := fmt.Sprintf("Устройство %s снова подключено к вашей семье", child.Name)
+
+		data := map[string]string{
+			"notification_type":  "child_rebind",
+			"child_id":           fmt.Sprintf("%d", child.ID),
+			"child_firebase_uid": child.FirebaseUID,
+		}
+
+		go func() {
+			err := s.NotifySrv.SendNotification(parent.DeviceToken, title, body, data, parent.Lang)
+			if err != nil {
+				fmt.Printf("[PUSH ERROR] Ошибка отправки уведомления о повторном подключении: %v\n", err)
+			} else {
+				fmt.Printf("[PUSH SUCCESS] Отправлено уведомление о повторном подключении ребенка %s\n", child.Name)
+			}
+		}()
 	}
 
 	return child, nil
