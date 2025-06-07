@@ -218,7 +218,10 @@ func RegisterChild(c *gin.Context) {
 
 func TokenVerify(c *gin.Context) {
 	var input struct {
-		UID string `json:"uid" binding:"required"`
+		UID                  string `json:"uid" binding:"required"`
+		ScreenTimePermission *bool  `json:"screen_time_permission"` // Указатели для отличия отсутствия значения от false
+		AppearOnTop          *bool  `json:"appear_on_top"`
+		AlarmsPermission     *bool  `json:"alarms_permission"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -238,7 +241,36 @@ func TokenVerify(c *gin.Context) {
 	// Проверяем, является ли пользователь ребенком
 	child, isChild := user.(models.Child)
 	parent, isParent := user.(models.Parent)
-	if isChild && child.TimeBlockedApps != "" {
+
+	// Если пользователь - ребенок и были переданы значения разрешений, обновляем их
+	if isChild && (input.ScreenTimePermission != nil || input.AppearOnTop != nil || input.AlarmsPermission != nil) {
+		// Обновляем только те поля, которые были переданы
+		if input.ScreenTimePermission != nil {
+			child.ScreenTimePermission = *input.ScreenTimePermission
+		}
+		if input.AppearOnTop != nil {
+			child.AppearOnTop = *input.AppearOnTop
+		}
+		if input.AlarmsPermission != nil {
+			child.AlarmsPermission = *input.AlarmsPermission
+		}
+
+		// Сохраняем обновления в базе данных
+		if err := childService.UpdateChildPermissions(child.FirebaseUID, child.ScreenTimePermission,
+			child.AppearOnTop, child.AlarmsPermission); err != nil {
+			// Логируем ошибку, но продолжаем выполнение
+			fmt.Printf("[ERROR] Failed to update child permissions: %v\n", err)
+		} else {
+			// Получаем обновленные данные ребенка
+			updatedChild, err := childService.ReadChild(child.FirebaseUID)
+			if err == nil {
+				child = updatedChild
+			}
+		}
+	}
+
+	// Проверяем, является ли пользователь ребенком
+	if child.TimeBlockedApps != "" {
 		var timeBlockRules []struct {
 			ID           int64     `json:"id"`
 			AppPackage   string    `json:"app_package"`
@@ -373,14 +405,6 @@ func TokenVerify(c *gin.Context) {
 						remainingMins = 0
 					}
 
-					// НЕ используем time.Until - это именно то, что вызывало уменьшение значения
-					// if !rule.OneTimeEndAt.IsZero() {
-					//     remainingMins = int(time.Until(rule.OneTimeEndAt).Minutes())
-					//     if remainingMins < 0 {
-					//         remainingMins = 0
-					//     }
-					// }
-
 					allBlocks = append(allBlocks, map[string]interface{}{
 						"id":            rule.ID,
 						"apps":          apps,
@@ -402,8 +426,6 @@ func TokenVerify(c *gin.Context) {
 				}
 			}
 
-			// Продолжаем с существующим кодом...
-
 			// Получаем информацию о последнем обновлении переводов
 			lastUpdateTime, err := translationService.GetLastUpdateTime()
 			if err != nil {
@@ -421,21 +443,24 @@ func TokenVerify(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"message": true,
 				"user": gin.H{
-					"id":                child.ID,
-					"role":              child.Role,
-					"lang":              child.Lang,
-					"name":              child.Name,
-					"family":            child.Family,
-					"firebase_uid":      child.FirebaseUID,
-					"is_binded":         child.IsBinded,
-					"usage_data":        child.UsageData,
-					"gender":            child.Gender,
-					"age":               child.Age,
-					"birthday":          child.Birthday,
-					"code":              child.Code,
-					"blocks":            allBlocks,
-					"translations_info": translationInfo, // Добавляем информацию о переводах
-					"device_token":      child.DeviceToken,
+					"id":                     child.ID,
+					"role":                   child.Role,
+					"lang":                   child.Lang,
+					"name":                   child.Name,
+					"family":                 child.Family,
+					"firebase_uid":           child.FirebaseUID,
+					"is_binded":              child.IsBinded,
+					"usage_data":             child.UsageData,
+					"gender":                 child.Gender,
+					"age":                    child.Age,
+					"birthday":               child.Birthday,
+					"code":                   child.Code,
+					"blocks":                 allBlocks,
+					"translations_info":      translationInfo, // Добавляем информацию о переводах
+					"device_token":           child.DeviceToken,
+					"screen_time_permission": child.ScreenTimePermission, // Добавляем эти три поля
+					"appear_on_top":          child.AppearOnTop,
+					"alarms_permission":      child.AlarmsPermission,
 				},
 			})
 			return
@@ -490,21 +515,24 @@ func TokenVerify(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": true,
 			"user": gin.H{
-				"id":                child.ID,
-				"role":              child.Role,
-				"lang":              child.Lang,
-				"name":              child.Name,
-				"family":            child.Family,
-				"firebase_uid":      child.FirebaseUID,
-				"is_binded":         child.IsBinded,
-				"usage_data":        child.UsageData,
-				"gender":            child.Gender,
-				"age":               child.Age,
-				"birthday":          child.Birthday,
-				"code":              child.Code,
-				"blocks":            []interface{}{}, // Пустой массив блоков
-				"translations_info": translationInfo, // Внутри user
-				"device_token":      child.DeviceToken,
+				"id":                     child.ID,
+				"role":                   child.Role,
+				"lang":                   child.Lang,
+				"name":                   child.Name,
+				"family":                 child.Family,
+				"firebase_uid":           child.FirebaseUID,
+				"is_binded":              child.IsBinded,
+				"usage_data":             child.UsageData,
+				"gender":                 child.Gender,
+				"age":                    child.Age,
+				"birthday":               child.Birthday,
+				"code":                   child.Code,
+				"blocks":                 []interface{}{}, // Пустой массив блоков
+				"translations_info":      translationInfo, // Внутри user
+				"device_token":           child.DeviceToken,
+				"screen_time_permission": child.ScreenTimePermission, // Новое поле
+				"appear_on_top":          child.AppearOnTop,          // Новое поле
+				"alarms_permission":      child.AlarmsPermission,
 			},
 		})
 	} else {

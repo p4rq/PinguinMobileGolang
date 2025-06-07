@@ -526,3 +526,27 @@ func (s *ChildService) UpdateDeviceToken(firebaseUID, deviceToken string) error 
 	child.DeviceToken = deviceToken
 	return s.ChildRepo.Save(child)
 }
+
+func (s *ChildService) UpdateChildPermissions(
+	firebaseUID string,
+	screenTimePermission bool,
+	appearOnTop bool,
+	alarmsPermission bool,
+) error {
+	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return fmt.Errorf("failed to find child: %w", err)
+	}
+
+	// Обновляем разрешения
+	child.ScreenTimePermission = screenTimePermission
+	child.AppearOnTop = appearOnTop
+	child.AlarmsPermission = alarmsPermission
+
+	// Сохраняем изменения
+	if err := s.ChildRepo.Save(child); err != nil {
+		return fmt.Errorf("failed to save child permissions: %w", err)
+	}
+
+	return nil
+}
