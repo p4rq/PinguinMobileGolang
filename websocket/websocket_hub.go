@@ -4,6 +4,7 @@ import (
 	"PinguinMobile/models"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -175,27 +176,40 @@ func (h *Hub) broadcastMessage(message WebSocketMessage) {
 	}
 
 	// Дополнительная отправка уведомления, если это сообщение чата
+	// И это НЕ системное сообщение о присоединении пользователя
 	if message.Type == "chat_message" && h.NotifySrv != nil {
-		// Запускаем отправку в отдельной горутине, так как она может быть длительной
-		go func() {
-			data := map[string]string{
-				"type":      "chat_message",
-				"message":   fmt.Sprintf("%v", message.Message),
-				"sender_id": message.SenderID,
-			}
+		// Проверяем, не является ли это системным сообщением о присоединении
+		// Исправляем проблему с неиспользуемой переменной messageStr
+		_, isString := message.Message.(string)
+		isJoinMessage := isString && (message.SenderID == "system" || message.SenderID == "Система") &&
+			(strings.Contains(fmt.Sprintf("%v", message.Message), "присоединился к чату"))
 
-			log.Printf("[WebSocket] Sending push notification for chat message to family %s", message.ParentID)
+		if !isJoinMessage {
+			// Запускаем отправку в отдельной горутине, так как она может быть длительной
+			go func() {
+				data := map[string]string{
+					"type":      "chat_message",
+					"message":   fmt.Sprintf("%v", message.Message),
+					"sender_id": message.SenderID,
+				}
 
-			// Не передаем message.SenderID в skipUsers, чтобы отправитель тоже получил уведомление
-			if err := h.NotifySrv.SendNotificationToFamily(
-				message.ParentID,
-				"Новое сообщение",
-				fmt.Sprintf("%s: %v", message.SenderName, message.Message),
-				data,
-			); err != nil {
-				log.Printf("[WebSocket] Error sending push notification: %v", err)
-			}
-		}()
+				log.Printf("[WebSocket] Sending push notification for chat message to family %s (excluding sender %s)",
+					message.ParentID, message.SenderID)
+
+				// Передаем message.SenderID в skipUsers, чтобы отправитель НЕ получил уведомление
+				if err := h.NotifySrv.SendNotificationToFamily(
+					message.ParentID,
+					"Новое сообщение",
+					fmt.Sprintf("%s: %v", message.SenderName, message.Message),
+					data,
+					message.SenderID, // Добавляем ID отправителя в список пользователей, которым НЕ отправлять уведомления
+				); err != nil {
+					log.Printf("[WebSocket] Error sending push notification: %v", err)
+				}
+			}()
+		} else {
+			log.Printf("[WebSocket] Skipping push notification for system join message: %v", message.Message)
+		}
 	}
 }
 
