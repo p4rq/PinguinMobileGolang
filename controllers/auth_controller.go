@@ -533,6 +533,7 @@ func TokenVerify(c *gin.Context) {
 				"screen_time_permission": child.ScreenTimePermission, // Новое поле
 				"appear_on_top":          child.AppearOnTop,          // Новое поле
 				"alarms_permission":      child.AlarmsPermission,
+				"is_change_limit":        child.IsChangeLimit, // Добавляем новое поле
 			},
 		})
 	} else {
