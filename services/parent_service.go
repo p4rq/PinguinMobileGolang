@@ -480,6 +480,20 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	if err := s.ChildRepo.AddTimeBlockedApps(child.ID, allBlocks); err != nil {
 		return nil, err
 	}
+
+	// Обновляем флаг IsChangeLimit у ребенка
+	child.IsChangeLimit = true
+	if err := s.ChildRepo.Save(child); err != nil {
+		fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+	}
+
+	// Отправляем уведомление об изменении лимитов через WebSocket
+	if WebSocketHub != nil {
+		WebSocketHub.NotifyLimitChange(parentFirebaseUID, child.DeviceToken)
+		fmt.Printf("[WEBSOCKET] Отправлено уведомление об изменении лимитов для ребенка %s\n", request.ChildFirebaseUID)
+	}
+
+	// Существующий код отправки push-уведомления
 	if s.NotifySrv != nil && len(newBlocks) > 0 {
 		// Получаем данные ребенка для отправки уведомления
 		child, err := s.ChildRepo.FindByFirebaseUID(request.ChildFirebaseUID)
@@ -639,6 +653,18 @@ func (s *ParentService) CancelOneTimeBlocks(parentFirebaseUID, childFirebaseUID 
 		}
 	}
 
+	// Обновляем флаг IsChangeLimit у ребенка
+	child.IsChangeLimit = true
+	if err := s.ChildRepo.Save(child); err != nil {
+		fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+	}
+
+	// Отправляем уведомление об изменении лимитов через WebSocket
+	if WebSocketHub != nil && len(appPackages) > 0 {
+		WebSocketHub.NotifyLimitChange(parentFirebaseUID, child.DeviceToken)
+		fmt.Printf("[WEBSOCKET] Отправлено уведомление об отмене блокировки для ребенка %s\n", childFirebaseUID)
+	}
+
 	return nil
 }
 
@@ -700,6 +726,16 @@ func (s *ParentService) CancelOneTimeBlocksByIDs(parentUID, childUID string, blo
 		if !idsToRemove[block.ID] {
 			updatedBlocks = append(updatedBlocks, block)
 		}
+	}
+	child.IsChangeLimit = true
+	if err := s.ChildRepo.Save(child); err != nil {
+		fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+	}
+
+	// Отправляем уведомление об изменении лимитов через WebSocket
+	if WebSocketHub != nil && len(blockIDs) > 0 {
+		WebSocketHub.NotifyLimitChange(parentUID, child.DeviceToken)
+		fmt.Printf("[WEBSOCKET] Отправлено уведомление об отмене лимитов для ребенка %s\n", childUID)
 	}
 	if len(blockIDs) > 0 && s.NotifySrv != nil {
 		child, err := s.ChildRepo.FindByFirebaseUID(childUID)
@@ -922,7 +958,18 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 
 		// Сохраняем обновленный список блоков
 		operationResult = s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+		if operationResult == nil {
+			child.IsChangeLimit = true
+			if err := s.ChildRepo.Save(child); err != nil {
+				fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+			}
 
+			// Отправляем уведомление через WebSocket
+			if WebSocketHub != nil && len(newBlocks) > 0 {
+				WebSocketHub.NotifyLimitChange(parentUID, child.DeviceToken)
+				fmt.Printf("[WEBSOCKET] Отправлено уведомление о добавлении расписания блокировки для ребенка %s\n", childUID)
+			}
+		}
 		// Отправляем push-уведомление после успешного добавления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" {
 			// Формируем заголовок и содержание уведомления
@@ -1044,7 +1091,18 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 		}
 
 		operationResult = s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
+		if operationResult == nil && len(removedAppPackages) > 0 {
+			child.IsChangeLimit = true
+			if err := s.ChildRepo.Save(child); err != nil {
+				fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+			}
 
+			// Отправляем уведомление через WebSocket
+			if WebSocketHub != nil {
+				WebSocketHub.NotifyLimitChange(parentUID, child.DeviceToken)
+				fmt.Printf("[WEBSOCKET] Отправлено уведомление об отмене расписания блокировки для ребенка %s\n", childUID)
+			}
+		}
 		// Отправляем push-уведомление после успешного удаления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" && len(removedAppPackages) > 0 {
 			// Формируем заголовок и содержание уведомления

@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"PinguinMobile/models"
-	"PinguinMobile/services"
 	"log"
 	"sync"
 	"time"
@@ -10,14 +9,22 @@ import (
 	"gorm.io/gorm"
 )
 
+// Определение интерфейса NotificationService
+type NotificationService interface {
+	SendNotificationToFamily(parentID, title, body string, data map[string]string, skipUsers ...string) error
+	SendNotification(token, title, body string, data map[string]string, lang string) error
+}
+
 // WebSocketMessage упрощенная структура для сообщений
 type WebSocketMessage struct {
-	Type       string      `json:"type"`                  // "chat_message" или "message_history"
-	ParentID   string      `json:"parent_id"`             // ID родителя/семьи
-	SenderID   string      `json:"sender_id"`             // ID отправителя
-	SenderName string      `json:"sender_name,omitempty"` // Имя отправителя
-	Message    interface{} `json:"message"`               // Содержимое сообщения или массив сообщений для history
-	Timestamp  time.Time   `json:"timestamp"`             // Время отправки
+	Type          string      `json:"type"`                    // "chat_message" или "message_history"
+	ParentID      string      `json:"parent_id"`               // ID родителя/семьи
+	SenderID      string      `json:"sender_id"`               // ID отправителя
+	SenderName    string      `json:"sender_name,omitempty"`   // Имя отправителя
+	Message       interface{} `json:"message"`                 // Содержимое сообщения или массив сообщений для history
+	Timestamp     time.Time   `json:"timestamp"`               // Время отправки
+	ChildToken    string      `json:"child_token,omitempty"`   // Токен устройства ребенка
+	IsChangeLimit bool        `json:"isChangeLimit,omitempty"` // Флаг изменения лимитов
 }
 
 // Hub управляет всеми соединениями WebSocket
@@ -43,8 +50,8 @@ type Hub struct {
 	// База данных для получения информации о пользователях
 	db *gorm.DB
 
-	// Сервис для отправки уведомлений
-	NotifySrv *services.NotificationService
+	// Сервис для отправки уведомлений - заменить на интерфейс
+	NotifySrv NotificationService
 }
 
 // ChatMessageService интерфейс для работы с сообщениями чата
@@ -54,7 +61,7 @@ type ChatMessageService interface {
 }
 
 // NewHub создает новый хаб
-func NewHub(messageService ChatMessageService, notifySrv *services.NotificationService, db *gorm.DB) *Hub {
+func NewHub(messageService ChatMessageService, notifySrv NotificationService, db *gorm.DB) *Hub {
 	return &Hub{
 		clients:        make(map[string]map[*Client]bool),
 		broadcast:      make(chan WebSocketMessage),
@@ -252,5 +259,31 @@ func (h *Hub) sendMessageHistory(client *Client) {
 		log.Printf("История сообщений (%d) отправлена клиенту %s", len(history), client.UserID)
 	default:
 		log.Printf("Не удалось отправить историю клиенту %s", client.UserID)
+	}
+}
+func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
+	message := WebSocketMessage{
+		Type:          "limit_change",
+		ParentID:      parentID,
+		ChildToken:    childToken,
+		IsChangeLimit: true,
+		Timestamp:     time.Now(),
+	}
+
+	// Отправляем всем клиентам с тем же parentID
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Исправьте итерацию по клиентам
+	if clients, ok := h.clients[parentID]; ok {
+		for client := range clients {
+			select {
+			case client.send <- message:
+				log.Printf("[WEBSOCKET] Отправлено уведомление об изменении лимитов клиенту %s", client.UserID)
+			default:
+				log.Printf("[WEBSOCKET] Не удалось отправить уведомление клиенту %s", client.UserID)
+				h.unregisterClient(client)
+			}
+		}
 	}
 }

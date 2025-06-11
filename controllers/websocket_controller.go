@@ -240,7 +240,7 @@ func ServeWs(c *gin.Context) {
 	// Запускаем горутины для обработки сообщений
 	go client.WritePump()
 	go client.ReadPump()
-	go client.Ping() // Добавляем ping для поддержания соединения
+	// go client.Ping() // Добавляем ping для поддержания соединения
 
 	// Отправляем системное сообщение о подключении
 	wsHub.BroadcastMessage(ws.WebSocketMessage{

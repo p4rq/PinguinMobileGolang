@@ -19,4 +19,6 @@ type Child struct {
 	ScreenTimePermission bool   `json:"screen_time_permission" gorm:"default:false"` // Разрешение на сбор статистики
 	AppearOnTop          bool   `json:"appear_on_top" gorm:"default:false"`          // Разрешение на блокировку приложений
 	AlarmsPermission     bool   `json:"alarms_permission" gorm:"default:false"`      // Разрешение на блокировку по времени
+	IsChangeLimit        bool   `json:"is_change_limit" gorm:"default:false"`        // Новое поле для отслеживания изменений лимитов
+
 }

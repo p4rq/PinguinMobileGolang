@@ -17,11 +17,11 @@ const (
 	// Время ожидания чтения сообщений от клиента
 	pongWait = 60 * time.Second
 
-	// Период отправки пингов
-	pingPeriod = (pongWait * 9) / 10
+	// Период отправки пингов - сделаем 5 секунд, чтобы уложиться в 10-секундный интервал
+	pingPeriod = 5 * time.Second
 
 	// Максимальный размер входящего сообщения
-	maxMessageSize = 1024
+	maxMessageSize = 1024 * 16 // Увеличим до 16KB для надежности
 )
 
 var upgrader = websocket.Upgrader{
@@ -33,8 +33,8 @@ var upgrader = websocket.Upgrader{
 
 // Client представляет собой соединение WebSocket с экспортируемыми полями
 type Client struct {
-	hub      *Hub                  // Экспортируем поле для доступа из других пакетов
-	conn     *websocket.Conn       // Экспортируем поле
+	hub      *Hub                  // Экспортируемое поле
+	conn     *websocket.Conn       // Экспортируемое поле
 	UserID   string                // ID пользователя (firebase_uid)
 	ParentID string                // ID семьи
 	UserName string                // имя пользователя
@@ -56,15 +56,28 @@ func NewClient(hub *Hub, conn *websocket.Conn, userID, parentID, userName string
 // ReadPump обрабатывает входящие сообщения от клиента
 func (c *Client) ReadPump() {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] Recovered in ReadPump: %v", r)
+		}
 		c.hub.UnregisterClient(c)
 		c.conn.Close()
-		log.Printf("WebSocket соединение закрыто для пользователя %s", c.UserID)
+		log.Printf("[WebSocket] Соединение закрыто для пользователя %s", c.UserID)
 	}()
 
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error {
+
+	// Улучшенная обработка pong с логированием
+	c.conn.SetPongHandler(func(appData string) error {
+		log.Printf("[WebSocket] Received pong from client %s", c.UserID)
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	// Добавление обработчика закрытия соединения для логирования кода закрытия
+	c.conn.SetCloseHandler(func(code int, text string) error {
+		log.Printf("[WebSocket] Connection closed for user %s with code %d: %s",
+			c.UserID, code, text)
 		return nil
 	})
 
@@ -129,12 +142,16 @@ func (c *Client) ReadPump() {
 	}
 }
 
-// WritePump отправляет сообщения клиенту (экспортируемый метод)
+// WritePump отправляет сообщения клиенту
 func (c *Client) WritePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] Recovered in WritePump: %v", r)
+		}
 		ticker.Stop()
 		c.conn.Close()
+		log.Printf("[WebSocket] WritePump завершен для пользователя %s", c.UserID)
 	}()
 
 	for {
@@ -142,41 +159,29 @@ func (c *Client) WritePump() {
 		case message, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				// Канал закрыт
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// Канал закрыт, отправляем сообщение о закрытии
+				log.Printf("[WebSocket] Send channel closed for user %s, closing connection", c.UserID)
+				c.conn.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 				return
 			}
 
-			// Отправляем сообщение клиенту
+			// Отправляем сообщение клиенту с подробным логированием
 			if err := c.conn.WriteJSON(message); err != nil {
-				log.Printf("Ошибка при отправке сообщения: %v", err)
+				log.Printf("[WebSocket] Error writing message to client %s: %v", c.UserID, err)
 				return
 			}
+			log.Printf("[WebSocket] Message sent to client %s: %s", c.UserID, message.Type)
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			log.Printf("[WebSocket] Sending ping to client %s", c.UserID)
+
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("[WebSocket] Error sending ping to client %s: %v", c.UserID, err)
 				return
 			}
-		}
-	}
-}
-
-// Ping отправляет ping-сообщения клиенту
-func (c *Client) Ping() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := c.conn.WriteControl(
-				websocket.PingMessage,
-				[]byte{},
-				time.Now().Add(10*time.Second)); err != nil {
-				log.Printf("Не удалось отправить ping: %v", err)
-				return
-			}
+			log.Printf("[WebSocket] Ping successfully sent to client %s", c.UserID)
 		}
 	}
 }

@@ -550,3 +550,14 @@ func (s *ChildService) UpdateChildPermissions(
 
 	return nil
 }
+
+// UpdateIsChangeLimit обновляет флаг IsChangeLimit для ребенка
+func (s *ChildService) UpdateIsChangeLimit(firebaseUID string, isChangeLimit bool) error {
+	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return err
+	}
+
+	child.IsChangeLimit = isChangeLimit
+	return s.ChildRepo.Save(child)
+}
