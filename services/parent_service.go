@@ -480,6 +480,18 @@ func (s *ParentService) BlockAppsTempOnce(parentFirebaseUID string, request Temp
 	if err := s.ChildRepo.AddTimeBlockedApps(child.ID, allBlocks); err != nil {
 		return nil, err
 	}
+	updatedChild, err := s.ReadChild(request.ChildFirebaseUID)
+	if err != nil {
+		fmt.Printf("[ERROR] BlockAppsTempOnce: Не удалось получить обновленные данные ребенка: %v\n", err)
+	} else {
+		// Устанавливаем флаг и сохраняем
+		updatedChild.IsChangeLimit = true
+		if err := s.ChildRepo.Save(updatedChild); err != nil {
+			fmt.Printf("[ERROR] BlockAppsTempOnce: Не удалось обновить флаг IsChangeLimit: %v\n", err)
+		} else {
+			fmt.Printf("[DEBUG] BlockAppsTempOnce: Флаг IsChangeLimit успешно установлен в true\n")
+		}
+	}
 	if s.NotifySrv != nil && len(newBlocks) > 0 {
 		// Получаем данные ребенка для отправки уведомления
 		child, err := s.ChildRepo.FindByFirebaseUID(request.ChildFirebaseUID)
@@ -944,7 +956,21 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 
 		// Сохраняем обновленный список блоков
 		operationResult = s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
-
+		if operationResult == nil {
+			// Перезагружаем модель ребенка, чтобы получить актуальные данные
+			updatedChild, err := s.ReadChild(childUID)
+			if err != nil {
+				fmt.Printf("[ERROR] Не удалось получить обновленные данные ребенка: %v\n", err)
+			} else {
+				// Устанавливаем флаг и сохраняем
+				updatedChild.IsChangeLimit = true
+				if err := s.ChildRepo.Save(updatedChild); err != nil {
+					fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+				} else {
+					fmt.Printf("[DEBUG] Флаг IsChangeLimit успешно установлен в true\n")
+				}
+			}
+		}
 		// Отправляем push-уведомление после успешного добавления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" {
 			// Формируем заголовок и содержание уведомления
@@ -1066,7 +1092,21 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 		}
 
 		operationResult = s.ChildRepo.AddTimeBlockedApps(child.ID, updatedBlocks)
-
+		if operationResult == nil {
+			// Перезагружаем модель ребенка, чтобы получить актуальные данные
+			updatedChild, err := s.ReadChild(childUID)
+			if err != nil {
+				fmt.Printf("[ERROR] Не удалось получить обновленные данные ребенка: %v\n", err)
+			} else {
+				// Устанавливаем флаг и сохраняем
+				updatedChild.IsChangeLimit = true
+				if err := s.ChildRepo.Save(updatedChild); err != nil {
+					fmt.Printf("[ERROR] Не удалось обновить флаг IsChangeLimit: %v\n", err)
+				} else {
+					fmt.Printf("[DEBUG] Флаг IsChangeLimit успешно установлен в true\n")
+				}
+			}
+		}
 		// Отправляем push-уведомление после успешного удаления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" && len(removedAppPackages) > 0 {
 			// Формируем заголовок и содержание уведомления
