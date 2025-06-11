@@ -102,6 +102,10 @@ func getUserInfoFromToken(tokenString string) (string, string, error) {
 
 // ServeWs обрабатывает подключение WebSocket
 func ServeWs(c *gin.Context) {
+	// Устанавливаем более длинный тайм-аут для соединения
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Keep-Alive", "timeout=120")
+
 	log.Printf("WebSocket connection attempt from IP: %s", c.ClientIP())
 
 	// Получаем токен из запроса
@@ -237,10 +241,21 @@ func ServeWs(c *gin.Context) {
 	client := ws.NewClient(wsHub, conn, userID, parentID, userName)
 	wsHub.RegisterClient(client)
 
+	// Отправляем keep-alive сообщение сразу после подключения
+	keepAliveMsg := ws.WebSocketMessage{
+		Type:       "keep_alive",
+		ParentID:   parentID,
+		SenderID:   "system",
+		SenderName: "System",
+		Message:    "Connection established",
+		Timestamp:  time.Now(),
+	}
+	client.Send(keepAliveMsg)
+
 	// Запускаем горутины для обработки сообщений
 	go client.WritePump()
 	go client.ReadPump()
-	// go client.Ping() // Добавляем ping для поддержания соединения
+	// go client.KeepAlive() // Запускаем периодические keep-alive сообщения
 
 	// Отправляем системное сообщение о подключении
 	wsHub.BroadcastMessage(ws.WebSocketMessage{

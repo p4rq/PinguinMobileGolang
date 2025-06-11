@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"PinguinMobile/models"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -144,81 +145,57 @@ func (h *Hub) unregisterClient(client *Client) {
 
 // broadcastMessage внутренний метод для отправки сообщений
 func (h *Hub) broadcastMessage(message WebSocketMessage) {
-	// Если это чатовое сообщение, сохраняем его в базу
-	// if message.Type == "chat_message" {
-	// 	// Сохраняем сообщение в БД
-	// 	if msgText, ok := message.Message.(string); ok && h.MessageService != nil {
-	// 		chatMessage := &models.ChatMessage{
-	// 			ParentID:   message.ParentID,
-	// 			SenderID:   message.SenderID,
-	// 			SenderName: message.SenderName,
-	// 			Message:    msgText,
-	// 			CreatedAt:  message.Timestamp,
-	// 		}
+	// Логирование для отладки
+	log.Printf("[WebSocket] Broadcasting message: type=%s, sender=%s", message.Type, message.SenderID)
 
-	// 		err := h.MessageService.SaveMessage(chatMessage)
-	// 		if err != nil {
-	// 			log.Printf("Ошибка при сохранении сообщения: %v", err)
-	// 		}
-	// 	}
-	// }
-
-	// Отправляем сообщение всем членам семьи
+	// Захватываем блокировку перед доступом к clients
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
-	// Сохраняем список активных пользователей для дальнейшей проверки
-	activeUsers := make(map[string]bool)
-
+	// Проверяем наличие клиентов для указанного parent_id
 	clients, ok := h.clients[message.ParentID]
-	if !ok {
-		log.Printf("Семья %s не найдена, сообщение не доставлено", message.ParentID)
-		h.mu.Unlock()
+	if !ok || len(clients) == 0 {
+		log.Printf("[WebSocket] No clients found for family %s", message.ParentID)
+		h.mu.Unlock() // Важно: разблокируем мьютекс перед выходом из функции
 		return
 	}
 
+	// Копируем клиентов, чтобы избежать проблем с конкурентным доступом
+	clientsCopy := make([]*Client, 0, len(clients))
 	for client := range clients {
-		// Добавляем пользователя в список активных
-		activeUsers[client.UserID] = true
-
-		select {
-		case client.send <- message: // Исправьте Send на send
-			// Сообщение успешно отправлено
-		default:
-			// Буфер клиента переполнен, отключаем его
-			h.unregisterClient(client)
-		}
+		clientsCopy = append(clientsCopy, client)
 	}
+
+	// Разблокируем мьютекс после копирования клиентов
 	h.mu.Unlock()
 
-	// Отправляем push-уведомления пользователям, которые не в сети
-	if message.Type == "chat_message" && h.NotifySrv != nil {
-		// Если это сообщение чата и сервис уведомлений инициализирован
-		if msgText, ok := message.Message.(string); ok {
-			// Найдем всех членов семьи, которые НЕ активны сейчас
-			// и отправим им push-уведомления
-			// Это нужно делать в отдельной горутине, чтобы не блокировать основной поток
-			go func() {
-				// Список пользователей для пропуска (отправитель и активные пользователи)
-				skipUsers := []string{message.SenderID}
-				for u := range activeUsers {
-					skipUsers = append(skipUsers, u)
-				}
+	// Отправляем сообщение каждому клиенту из копии
+	for _, client := range clientsCopy {
+		log.Printf("[WebSocket] Sending message to client %s", client.UserID)
+		client.Send(message)
+	}
 
-				// Отправляем push-уведомления всем членам семьи, кроме активных
-				h.NotifySrv.SendNotificationToFamily(
-					message.ParentID,
-					message.SenderName, // Имя отправителя как заголовок
-					msgText,            // Текст сообщения как тело
-					map[string]string{
-						"notification_type": "chat_message",
-						"sender_id":         message.SenderID,
-						"parent_id":         message.ParentID,
-					},
-					skipUsers...,
-				)
-			}()
-		}
+	// Дополнительная отправка уведомления, если это сообщение чата
+	if message.Type == "chat_message" && h.NotifySrv != nil {
+		// Запускаем отправку в отдельной горутине, так как она может быть длительной
+		go func() {
+			data := map[string]string{
+				"type":      "chat_message",
+				"message":   fmt.Sprintf("%v", message.Message),
+				"sender_id": message.SenderID,
+			}
+
+			log.Printf("[WebSocket] Sending push notification for chat message to family %s", message.ParentID)
+
+			// Не передаем message.SenderID в skipUsers, чтобы отправитель тоже получил уведомление
+			if err := h.NotifySrv.SendNotificationToFamily(
+				message.ParentID,
+				"Новое сообщение",
+				fmt.Sprintf("%s: %v", message.SenderName, message.Message),
+				data,
+			); err != nil {
+				log.Printf("[WebSocket] Error sending push notification: %v", err)
+			}
+		}()
 	}
 }
 
