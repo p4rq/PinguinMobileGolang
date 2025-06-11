@@ -176,33 +176,33 @@ func (h *Hub) broadcastMessage(message WebSocketMessage) {
 	}
 
 	// Дополнительная отправка уведомления, если это сообщение чата
-	// И это НЕ системное сообщение о присоединении пользователя
 	if message.Type == "chat_message" && h.NotifySrv != nil {
-		// Проверяем, не является ли это системным сообщением о присоединении
-		// Исправляем проблему с неиспользуемой переменной messageStr
 		_, isString := message.Message.(string)
 		isJoinMessage := isString && (message.SenderID == "system" || message.SenderID == "Система") &&
 			(strings.Contains(fmt.Sprintf("%v", message.Message), "присоединился к чату"))
 
 		if !isJoinMessage {
-			// Запускаем отправку в отдельной горутине, так как она может быть длительной
+			// Запускаем отправку в отдельной горутине
 			go func() {
+				// Дополнительные данные для FCM
 				data := map[string]string{
-					"type":      "chat_message",
-					"message":   fmt.Sprintf("%v", message.Message),
-					"sender_id": message.SenderID,
+					"type":          "chat_message",
+					"message":       fmt.Sprintf("%v", message.Message),
+					"sender_id":     message.SenderID,
+					"sender_type":   h.determineUserType(message.SenderID), // Добавляем тип отправителя
+					"receiver_type": "all",                                 // Указываем, что получатель - все (родители и дети)
 				}
 
-				log.Printf("[WebSocket] Sending push notification for chat message to family %s (excluding sender %s)",
-					message.ParentID, message.SenderID)
+				log.Printf("[WebSocket] Sending push notification for message from user %s (type: %s)",
+					message.SenderID, data["sender_type"])
 
-				// Передаем message.SenderID в skipUsers, чтобы отправитель НЕ получил уведомление
+				// Отправляем уведомления ВСЕМ членам семьи, кроме отправителя
 				if err := h.NotifySrv.SendNotificationToFamily(
 					message.ParentID,
 					"Новое сообщение",
 					fmt.Sprintf("%s: %v", message.SenderName, message.Message),
 					data,
-					message.SenderID, // Добавляем ID отправителя в список пользователей, которым НЕ отправлять уведомления
+					message.SenderID, // Исключаем отправителя
 				); err != nil {
 					log.Printf("[WebSocket] Error sending push notification: %v", err)
 				}
@@ -211,6 +211,31 @@ func (h *Hub) broadcastMessage(message WebSocketMessage) {
 			log.Printf("[WebSocket] Skipping push notification for system join message: %v", message.Message)
 		}
 	}
+}
+
+// determineUserType определяет тип пользователя по ID
+func (h *Hub) determineUserType(userID string) string {
+	// Проверяем, что есть доступ к базе данных
+	if h.db == nil {
+		log.Printf("[WebSocket] Database is nil, cannot determine user type")
+		return "unknown"
+	}
+
+	// Проверяем существование в таблице родителей
+	var parentCount int64
+	h.db.Model(&models.Parent{}).Where("firebase_uid = ?", userID).Count(&parentCount)
+	if parentCount > 0 {
+		return "parent"
+	}
+
+	// Проверяем существование в таблице детей
+	var childCount int64
+	h.db.Model(&models.Child{}).Where("firebase_uid = ?", userID).Count(&childCount)
+	if childCount > 0 {
+		return "child"
+	}
+
+	return "unknown"
 }
 
 // sendMessageHistory отправляет историю сообщений новому клиенту
@@ -252,7 +277,10 @@ func (h *Hub) sendMessageHistory(client *Client) {
 		log.Printf("Не удалось отправить историю клиенту %s", client.UserID)
 	}
 }
+
+// NotifyLimitChange улучшенная версия для отправки уведомлений о смене лимитов
 func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
+	// Создаем сообщение для WebSocket
 	message := WebSocketMessage{
 		Type:          "limit_change",
 		ParentID:      parentID,
@@ -261,20 +289,52 @@ func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
 		Timestamp:     time.Now(),
 	}
 
-	// Отправляем всем клиентам с тем же parentID
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	log.Printf("[WebSocket] Sending limit change notification for parent %s, child token %s",
+		parentID, childToken)
 
-	// Исправьте итерацию по клиентам
-	if clients, ok := h.clients[parentID]; ok {
+	// 1. Отправляем WebSocket сообщения
+	h.mu.Lock()
+
+	clients, ok := h.clients[parentID]
+	if !ok || len(clients) == 0 {
+		log.Printf("[WebSocket] No WebSocket clients found for family %s", parentID)
+		h.mu.Unlock()
+	} else {
+		// Копируем клиентов для безопасной итерации
+		clientsCopy := make([]*Client, 0, len(clients))
 		for client := range clients {
-			select {
-			case client.send <- message:
-				log.Printf("[WEBSOCKET] Отправлено уведомление об изменении лимитов клиенту %s", client.UserID)
-			default:
-				log.Printf("[WEBSOCKET] Не удалось отправить уведомление клиенту %s", client.UserID)
-				h.unregisterClient(client)
-			}
+			clientsCopy = append(clientsCopy, client)
 		}
+		h.mu.Unlock()
+
+		// Отправляем уведомление каждому клиенту
+		for _, client := range clientsCopy {
+			log.Printf("[WebSocket] Sending limit change notification to client %s", client.UserID)
+			client.Send(message)
+		}
+	}
+
+	// 2. Отправляем Push уведомления через FCM
+	if h.NotifySrv != nil {
+		go func() {
+			data := map[string]string{
+				"type":        "limit_change",
+				"child_token": childToken,
+			}
+
+			// Отправляем уведомления всем членам семьи
+			if err := h.NotifySrv.SendNotificationToFamily(
+				parentID,
+				"Изменение лимитов",
+				"Были изменены настройки лимитов для ребенка",
+				data,
+			); err != nil {
+				log.Printf("[WebSocket] Error sending limit change push notification: %v", err)
+			} else {
+				log.Printf("[WebSocket] Successfully sent limit change push notifications to family %s", parentID)
+			}
+		}()
+	} else {
+		log.Printf("[WebSocket] NotificationService is nil, cannot send limit change push notifications")
 	}
 }

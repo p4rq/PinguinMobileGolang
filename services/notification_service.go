@@ -206,7 +206,7 @@ func (s *NotificationService) SendNotificationToChild(childUID, title, body stri
 	return s.SendNotification(child.DeviceToken, title, body, data, child.Lang)
 }
 
-// SendNotificationToFamily отправляет уведомление всем членам семьи
+// SendNotificationToFamily отправляет уведомление всем членам семьи (и родителям, и детям)
 func (s *NotificationService) SendNotificationToFamily(
 	parentUID,
 	title,
@@ -214,42 +214,99 @@ func (s *NotificationService) SendNotificationToFamily(
 	data map[string]string,
 	skipUIDs ...string,
 ) error {
+	log.Printf("[FCM] Sending family notification to family %s (title: %s)", parentUID, title)
+
 	// Карта пользователей для пропуска
 	skipMap := make(map[string]bool)
 	for _, uid := range skipUIDs {
 		skipMap[uid] = true
+		log.Printf("[FCM] Will skip user %s", uid)
 	}
 
-	// Получаем родителя
+	// Создаем счетчики для статистики
+	var sentCount, errorCount int
+
+	// ----------------------
+	// 1. ОТПРАВКА РОДИТЕЛЯМ
+	// ----------------------
+
+	// Получаем основного родителя
 	parent, err := s.ParentRepo.FindByFirebaseUID(parentUID)
 	if err != nil {
-		return fmt.Errorf("parent not found: %w", err)
-	}
-
-	// Отправляем уведомление родителю, если он не в списке пропуска
-	if !skipMap[parent.FirebaseUID] && parent.DeviceToken != "" {
-		if err := s.SendNotificationToParent(parent.FirebaseUID, title, body, data); err != nil {
-			log.Printf("Error sending notification to parent %s: %v", parent.FirebaseUID, err)
+		log.Printf("[FCM] Parent %s not found: %v", parentUID, err)
+	} else {
+		// Отправляем уведомление главному родителю, если он не в списке пропуска
+		if !skipMap[parent.FirebaseUID] && parent.DeviceToken != "" {
+			log.Printf("[FCM] Sending notification to main parent %s", parent.FirebaseUID)
+			if err := s.SendNotification(parent.DeviceToken, title, body, data, parent.Lang); err != nil {
+				log.Printf("[FCM] Error sending to parent %s: %v", parent.FirebaseUID, err)
+				errorCount++
+			} else {
+				log.Printf("[FCM] Successfully sent to parent %s", parent.FirebaseUID)
+				sentCount++
+			}
+		} else if skipMap[parent.FirebaseUID] {
+			log.Printf("[FCM] Skipping parent %s (in skip list)", parent.FirebaseUID)
+		} else if parent.DeviceToken == "" {
+			log.Printf("[FCM] Skipping parent %s (no device token)", parent.FirebaseUID)
 		}
 	}
 
-	// Получаем список детей в семье
+	// --------------------
+	// 2. ОТПРАВКА ДЕТЯМ
+	// --------------------
+
+	// Получаем список детей в семье из JSON-поля родителя
 	var family []map[string]interface{}
-	if parent.Family != "" {
+	if err == nil && parent.Family != "" {
 		if err := json.Unmarshal([]byte(parent.Family), &family); err != nil {
-			log.Printf("Error parsing family JSON: %v", err)
+			log.Printf("[FCM] Error parsing family JSON: %v", err)
 		} else {
+			log.Printf("[FCM] Found %d family members in JSON", len(family))
+
 			// Отправляем уведомления каждому ребенку в семье
 			for _, member := range family {
-				if childUID, ok := member["firebase_uid"].(string); ok {
-					if !skipMap[childUID] {
-						if err := s.SendNotificationToChild(childUID, title, body, data); err != nil {
-							log.Printf("Error sending notification to child %s: %v", childUID, err)
-						}
+				if childUID, ok := member["firebase_uid"].(string); ok && childUID != "" {
+					// Если ребенок в списке пропуска, пропускаем его
+					if skipMap[childUID] {
+						log.Printf("[FCM] Skipping child %s (in skip list)", childUID)
+						continue
+					}
+
+					// Получаем ребенка из БД для доступа к токену и языку
+					child, err := s.ChildRepo.FindByFirebaseUID(childUID)
+					if err != nil {
+						log.Printf("[FCM] Child %s not found: %v", childUID, err)
+						continue
+					}
+
+					// Проверяем наличие токена устройства
+					if child.DeviceToken == "" {
+						log.Printf("[FCM] Child %s has no device token, skipping", childUID)
+						continue
+					}
+
+					// Отправляем уведомление ребенку
+					log.Printf("[FCM] Sending notification to child %s", childUID)
+					if err := s.SendNotification(child.DeviceToken, title, body, data, child.Lang); err != nil {
+						log.Printf("[FCM] Error sending to child %s: %v", childUID, err)
+						errorCount++
+					} else {
+						log.Printf("[FCM] Successfully sent to child %s", childUID)
+						sentCount++
 					}
 				}
 			}
 		}
+	} else {
+		log.Printf("[FCM] No family data available for parent %s", parentUID)
+	}
+
+	// Отчет о результатах
+	log.Printf("[FCM] Family notification summary: sent %d, errors %d", sentCount, errorCount)
+
+	if errorCount > 0 {
+		return fmt.Errorf("failed to send %d notifications", errorCount)
 	}
 
 	return nil

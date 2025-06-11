@@ -461,6 +461,7 @@ func TokenVerify(c *gin.Context) {
 					"screen_time_permission": child.ScreenTimePermission, // Добавляем эти три поля
 					"appear_on_top":          child.AppearOnTop,
 					"alarms_permission":      child.AlarmsPermission,
+					"is_change_limit":        child.IsChangeLimit, // Добавляем новое поле
 				},
 			})
 			return
