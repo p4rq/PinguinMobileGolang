@@ -1,7 +1,10 @@
 package controllers
 
 import (
+	"PinguinMobile/models"
 	"PinguinMobile/services"
+
+	// Теперь импорт используется
 	"context"
 	"encoding/json"
 	"fmt"
@@ -307,7 +310,6 @@ func UnblockApps(c *gin.Context) {
 
 // BlockAppsTempOnce обрабатывает запрос на одноразовую временную блокировку приложений
 func BlockAppsTempOnce(c *gin.Context) {
-
 	var request services.TempBlockRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -322,11 +324,51 @@ func BlockAppsTempOnce(c *gin.Context) {
 		return
 	}
 
+	// Получаем токен устройства ребенка для отправки уведомлений через другой контроллер
+	child, err := GetChildData(request.ChildFirebaseUID)
+	if err != nil {
+		// Логируем ошибку, но продолжаем выполнение
+		fmt.Printf("[ERROR] BlockAppsTempOnce: Не удалось найти ребенка для уведомлений: %v\n", err)
+	} else if child != nil && child.DeviceToken != "" {
+		// Вызываем метод из websocket_controller для отправки уведомления
+		fmt.Printf("[WebSocket] BlockAppsTempOnce: Отправка уведомления о смене лимитов для родителя %s, ребенка %s\n",
+			parentFirebaseUID, request.ChildFirebaseUID)
+
+		// Асинхронно отправляем уведомление через WebSocket
+		go NotifyLimitChange(parentFirebaseUID, child.DeviceToken)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Приложения временно заблокированы",
 		"blocks":  blocks,
 	})
+}
+
+// Вспомогательный метод для получения данных ребенка
+func GetChildData(childFirebaseUID string) (*models.Child, error) {
+	child, err := childService.ReadChild(childFirebaseUID)
+	if err != nil {
+		return nil, err
+	}
+	// Возвращаем указатель на полученную структуру
+	return &child, nil
+}
+
+// Вспомогательный метод для отправки уведомлений через WebSocket
+func NotifyLimitChange(parentID, childToken string) {
+	if WebSocketHub == nil {
+		fmt.Printf("[WARN] WebSocketHub не инициализирован, уведомление не отправлено\n")
+		return
+	}
+
+	fmt.Printf("[INFO] Отправка уведомления о смене лимитов через WebSocket: parent=%s, child_token=%s\n",
+		parentID, childToken)
+
+	// Вызываем метод NotifyLimitChange
+	WebSocketHub.NotifyLimitChange(parentID, childToken)
+
+	fmt.Printf("[INFO] Уведомление о смене лимитов успешно отправлено\n")
 }
 
 // GetOneTimeBlocks возвращает список одноразовых блокировок для ребенка

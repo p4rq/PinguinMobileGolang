@@ -280,46 +280,55 @@ func (h *Hub) sendMessageHistory(client *Client) {
 
 // NotifyLimitChange улучшенная версия для отправки уведомлений о смене лимитов
 func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
-	// Создаем сообщение для WebSocket
+	// Создаем улучшенное сообщение для WebSocket
 	message := WebSocketMessage{
 		Type:          "limit_change",
 		ParentID:      parentID,
 		ChildToken:    childToken,
 		IsChangeLimit: true,
 		Timestamp:     time.Now(),
+		SenderID:      "system",
+		SenderName:    "Система",
+		Message:       "Настройки лимитов были обновлены",
 	}
 
-	log.Printf("[WebSocket] Sending limit change notification for parent %s, child token %s",
+	log.Printf("[WebSocket] Processing limit change notification for parent %s, child token %s",
 		parentID, childToken)
 
-	// 1. Отправляем WebSocket сообщения
+	// 1. Отправляем WebSocket сообщения родителям
 	h.mu.Lock()
-
 	clients, ok := h.clients[parentID]
 	if !ok || len(clients) == 0 {
-		log.Printf("[WebSocket] No WebSocket clients found for family %s", parentID)
-		h.mu.Unlock()
+		log.Printf("[WebSocket] No parent WebSocket clients found for family %s", parentID)
+		h.mu.Unlock() // Разблокируем мьютекс если клиентов нет
 	} else {
 		// Копируем клиентов для безопасной итерации
 		clientsCopy := make([]*Client, 0, len(clients))
 		for client := range clients {
 			clientsCopy = append(clientsCopy, client)
 		}
-		h.mu.Unlock()
+		h.mu.Unlock() // Разблокируем мьютекс после копирования клиентов
 
-		// Отправляем уведомление каждому клиенту
+		// Отправляем уведомление каждому клиенту-родителю
 		for _, client := range clientsCopy {
 			log.Printf("[WebSocket] Sending limit change notification to client %s", client.UserID)
 			client.Send(message)
 		}
 	}
 
-	// 2. Отправляем Push уведомления через FCM
+	// 2. Отправляем прямое уведомление ребенку
+	h.SendNotificationToChild(childToken, parentID)
+
+	// 3. Добавляем сообщение в чат для всей семьи
+	h.addLimitChangeMessageToChat(parentID, childToken)
+
+	// 4. Отправляем Push уведомления через FCM всей семье
 	if h.NotifySrv != nil {
 		go func() {
 			data := map[string]string{
-				"type":        "limit_change",
-				"child_token": childToken,
+				"type":            "limit_change",
+				"child_token":     childToken,
+				"is_change_limit": "true",
 			}
 
 			// Отправляем уведомления всем членам семьи
@@ -337,4 +346,101 @@ func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
 	} else {
 		log.Printf("[WebSocket] NotificationService is nil, cannot send limit change push notifications")
 	}
+}
+
+// SendNotificationToChild отправляет уведомление ребенку по токену устройства
+func (h *Hub) SendNotificationToChild(childToken string, parentID string) {
+	if childToken == "" {
+		log.Printf("[WebSocket] Child token is empty, cannot send direct notification")
+		return
+	}
+
+	if h.NotifySrv == nil {
+		log.Printf("[WebSocket] NotificationService is nil, cannot send direct notification to child")
+		return
+	}
+
+	if h.db == nil {
+		log.Printf("[WebSocket] Database is nil, cannot find child information")
+		return
+	}
+
+	// Найдем ребенка с данным токеном устройства
+	var child models.Child
+	result := h.db.Where("device_token = ?", childToken).First(&child)
+	if result.Error != nil {
+		log.Printf("[WebSocket] Error finding child with token %s: %v",
+			childToken, result.Error)
+		return
+	}
+
+	// Отправляем прямое уведомление через FCM
+	data := map[string]string{
+		"type":            "limit_change",
+		"child_token":     childToken,
+		"is_change_limit": "true",
+		"parent_id":       parentID,
+	}
+
+	err := h.NotifySrv.SendNotification(
+		childToken,
+		"Обновление настроек",
+		"Ваши настройки лимитов были обновлены",
+		data,
+		child.Lang) // Используем язык ребенка для локализации
+
+	if err != nil {
+		log.Printf("[WebSocket] Error sending direct notification to child: %v", err)
+	} else {
+		log.Printf("[WebSocket] Successfully sent direct notification to child %s", child.FirebaseUID)
+	}
+}
+
+// addLimitChangeMessageToChat добавляет сообщение об изменении лимитов в чат
+func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
+	if h.MessageService == nil {
+		log.Printf("[WebSocket] MessageService is nil, cannot add limit change message to chat")
+		return
+	}
+
+	if h.db == nil {
+		log.Printf("[WebSocket] Database is nil, cannot find child information")
+		return
+	}
+
+	// Найдем ребенка с данным токеном устройства
+	var child models.Child
+	result := h.db.Where("device_token = ?", childToken).First(&child)
+	if result.Error != nil {
+		log.Printf("[WebSocket] Error finding child for chat message: %v", result.Error)
+		return
+	}
+
+	// Создаем сообщение для чата
+	chatMessage := models.ChatMessage{
+		ParentID:   parentID,
+		SenderID:   "system",
+		SenderName: "Система",
+		Message:    fmt.Sprintf("Обновлены настройки лимитов для ребенка %s", child.Name),
+		// ReceiverID: "", // Всем в семье
+	}
+
+	// Сохраняем в базу данных
+	if err := h.MessageService.SaveMessage(&chatMessage); err != nil {
+		log.Printf("[WebSocket] Error saving limit change chat message: %v", err)
+		return
+	}
+
+	// Отправляем сообщение всем клиентам
+	wsMessage := WebSocketMessage{
+		Type:       "chat_message",
+		ParentID:   parentID,
+		SenderID:   chatMessage.SenderID,
+		SenderName: chatMessage.SenderName,
+		Message:    chatMessage.Message,
+		Timestamp:  time.Now(),
+	}
+
+	h.BroadcastMessage(wsMessage)
+	log.Printf("[WebSocket] Added limit change message to chat for family %s", parentID)
 }
