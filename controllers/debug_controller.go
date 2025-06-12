@@ -1,11 +1,13 @@
 package controllers
 
 import (
+	"PinguinMobile/services"
 	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,6 +15,14 @@ import (
 	"firebase.google.com/go/v4/messaging"
 	"google.golang.org/api/option"
 )
+
+// Сервис уведомлений должен быть доступен через переменную
+var debugNotificationService *services.NotificationService
+
+// Устанавливаем сервис
+func SetDebugNotificationService(service *services.NotificationService) {
+	debugNotificationService = service
+}
 
 // DebugPushNotification отправляет тестовое push-уведомление
 func DebugPushNotification(c *gin.Context) {
@@ -135,5 +145,48 @@ func DebugPushNotification(c *gin.Context) {
 			"body":         request.Body,
 			"project_id":   projectID,
 		},
+	})
+}
+
+// TestFCMNotification отправляет тестовое уведомление через FCM
+func TestFCMNotification(c *gin.Context) {
+	var request struct {
+		Token string `json:"token" binding:"required"` // FCM токен устройства
+		Title string `json:"title" binding:"required"` // Заголовок уведомления
+		Body  string `json:"body" binding:"required"`  // Текст уведомления
+		Lang  string `json:"lang"`                     // Язык (опционально)
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Добавим данные для уведомления
+	data := map[string]string{
+		"notification_type": "test_notification",
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}
+
+	// Отправляем уведомление
+	err := debugNotificationService.SendNotification(
+		request.Token,
+		request.Title,
+		request.Body,
+		data,
+		request.Lang,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Уведомление отправлено",
 	})
 }

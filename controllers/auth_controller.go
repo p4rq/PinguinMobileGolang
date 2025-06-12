@@ -197,8 +197,9 @@ func LoginParent(c *gin.Context) {
 }
 func RegisterChild(c *gin.Context) {
 	var input struct {
-		Lang string `json:"lang" binding:"required"`
-		Code string `json:"code" binding:"required"`
+		Lang        string `json:"lang" binding:"required"`
+		Code        string `json:"code" binding:"required"`
+		DeviceToken string `json:"device_token"` // Добавляем поле для токена устройства
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -206,11 +207,80 @@ func RegisterChild(c *gin.Context) {
 		return
 	}
 
-	// Передаем пустую строку в качестве имени
-	child, token, err := authService.RegisterChild(input.Lang, input.Code, "")
+	// Шаг 1: Пробуем выполнить логин ребенка с использованием его кода
+	// Это работает с кодом ребенка (а не родителя)
+	child, token, err := authService.LoginChild(input.Code)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		// Если не удалось выполнить логин, пробуем зарегистрировать как новый аккаунт
+		child, token, err = authService.RegisterChild(input.Lang, input.Code, "")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// Если логин успешен, обновляем язык ребенка
+		if child.Lang != input.Lang {
+			err := childService.UpdateLanguage(child.FirebaseUID, input.Lang)
+			if err != nil {
+				fmt.Printf("[WARN] RegisterChild: не удалось обновить язык ребенка: %v\n", err)
+			} else {
+				fmt.Printf("[INFO] RegisterChild: язык ребенка обновлен на %s\n", input.Lang)
+			}
+		}
+	}
+
+	// Шаг 2: Обновление токена устройства
+	if input.DeviceToken != "" && child.DeviceToken != input.DeviceToken {
+		err := childService.UpdateDeviceToken(child.FirebaseUID, input.DeviceToken)
+		if err != nil {
+			fmt.Printf("[ERROR] RegisterChild: не удалось обновить токен устройства: %v\n", err)
+		} else {
+			fmt.Printf("[INFO] RegisterChild: токен устройства успешно обновлен для ребенка %s\n", child.FirebaseUID)
+			// Получаем обновленные данные ребенка
+			updatedChild, err := childService.ReadChild(child.FirebaseUID)
+			if err == nil {
+				child = updatedChild // Используем обновленного ребенка в ответе
+			}
+		}
+	}
+
+	// Шаг 3: Проверяем статус привязки и наличие родителя в контексте
+	needRebinding := !child.IsBinded // Если ребенок не привязан, пытаемся его привязать
+
+	// Проверяем наличие идентификатора родителя в контексте
+	parentUID, exists := c.Get("firebase_uid")
+	if exists && parentUID != nil {
+		parentUIDStr, ok := parentUID.(string)
+		if ok && parentUIDStr != "" {
+			// Если родитель аутентифицирован, пытаемся привязать ребенка, независимо от текущего статуса
+			needRebinding = true // Принудительная привязка при наличии родителя
+			fmt.Printf("[INFO] RegisterChild: Обнаружен родитель %s при регистрации ребенка %s\n",
+				parentUIDStr, child.FirebaseUID)
+		}
+	}
+
+	// Если нужна перепривязка или родитель аутентифицирован, выполняем привязку
+	if needRebinding {
+		fmt.Printf("[INFO] RegisterChild: Выполняем привязку ребенка с кодом %s (текущий статус IsBinded: %v)\n",
+			input.Code, child.IsBinded)
+
+		reboundChild, err := childService.RebindChild(input.Code)
+		if err != nil {
+			fmt.Printf("[WARN] RegisterChild: Не удалось привязать ребенка: %v\n", err)
+		} else {
+			child = reboundChild // Обновляем объект ребенка после успешной привязки
+			fmt.Printf("[INFO] RegisterChild: Ребенок %s успешно привязан, новый статус IsBinded: %v\n",
+				child.FirebaseUID, child.IsBinded)
+		}
+	}
+
+	// Проверяем финальный статус привязки перед отправкой ответа
+	if child.IsBinded {
+		fmt.Printf("[INFO] RegisterChild: Завершение с флагом привязки: %v для ребенка %s\n",
+			child.IsBinded, child.FirebaseUID)
+	} else {
+		fmt.Printf("[WARN] RegisterChild: Завершение со статусом непривязанного ребенка %s\n",
+			child.FirebaseUID)
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": true, "token": token, "data": child})

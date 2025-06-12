@@ -561,3 +561,26 @@ func (s *ChildService) UpdateIsChangeLimit(firebaseUID string, isChangeLimit boo
 	child.IsChangeLimit = isChangeLimit
 	return s.ChildRepo.Save(child)
 }
+func (s *ChildService) UpdateLanguage(firebaseUID string, lang string) error {
+	// Проверка на валидный язык (опционально)
+	validLangs := map[string]bool{"ru": true, "en": true, "kz": true} // Добавьте поддерживаемые языки
+	if !validLangs[lang] {
+		return fmt.Errorf("unsupported language: %s", lang)
+	}
+
+	// Находим ребенка по Firebase UID
+	child, err := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+	if err != nil {
+		return fmt.Errorf("child with firebase_uid %s not found: %w", firebaseUID, err)
+	}
+
+	// Обновляем язык
+	child.Lang = lang
+
+	// Сохраняем изменения через репозиторий
+	if err := s.ChildRepo.Save(child); err != nil {
+		return fmt.Errorf("failed to update language: %w", err)
+	}
+
+	return nil
+}
