@@ -3,8 +3,10 @@ package config
 import (
 	"PinguinMobile/models"
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	firebase "firebase.google.com/go"
 	"firebase.google.com/go/auth"
@@ -17,12 +19,38 @@ var DB *gorm.DB
 var FirebaseAuth *auth.Client
 
 func InitDatabase() {
-	dsn := "host=" + os.Getenv("DB_HOST") + " user=" + os.Getenv("DB_USER") + " password=" + os.Getenv("DB_PASSWORD") + " dbname=" + os.Getenv("DB_NAME") + " port=" + os.Getenv("DB_PORT") + " sslmode=disable TimeZone=Asia/Almaty"
+	// Получаем значения из environment variables
+	host := os.Getenv("DB_HOST")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	dbname := os.Getenv("DB_NAME")
+	port := os.Getenv("DB_PORT")
+
+	// Используем значение из DB_SSLMODE или "require" для Render
+	sslmode := os.Getenv("DB_SSLMODE")
+	if sslmode == "" {
+		if strings.Contains(host, "render.com") {
+			sslmode = "require"
+		} else {
+			sslmode = "disable"
+		}
+	}
+
+	// Отладочный вывод
+	log.Printf("Connecting to database: host=%s user=%s dbname=%s port=%s sslmode=%s",
+		host, user, dbname, port, sslmode)
+
+	// Формируем строку подключения
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Almaty",
+		host, user, password, dbname, port, sslmode)
+
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
+
+	log.Println("Successfully connected to database!")
 
 	DB.AutoMigrate(&models.Parent{}, &models.Child{})
 }

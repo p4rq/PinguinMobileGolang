@@ -67,10 +67,10 @@ func main() {
 
 	// Жестко закодированные параметры для Render
 	dbUser := "pinguin_user"
-	dbPassword := "AYaZRsxBvKCVBMPdctqXJEiaRWNW88Wf"
-	dbHost := "dpg-d0i9cbbuibrs73a2uqq0-a.singapore-postgres.render.com"
+	dbPassword := "aYFSMI99tAOPuuciifwerEYtlNXNbgHV"                     // Новый пароль
+	dbHost := "dpg-d15lv67diees73f2i6f0-a.singapore-postgres.render.com" // Новый хост
 	dbPort := "5432"
-	dbName := "pinguin_mobile"
+	dbName := "pinguin_mobile_44yt" // Новое имя БД
 	dbSSLMode := "require"
 
 	// Формируем строку подключения
