@@ -98,7 +98,6 @@ func MonitorChild(c *gin.Context) {
 func RebindChild(c *gin.Context) {
 	var request struct {
 		Code string `json:"code" binding:"required"`
-		// Удаляем обязательный параметр ParentFirebaseUID
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {

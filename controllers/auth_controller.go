@@ -592,7 +592,26 @@ func LoginChild(c *gin.Context) {
 			}
 		}
 	}
+	parentUID, exists := c.Get("firebase_uid")
+	if exists && parentUID != nil {
+		parentUIDStr, ok := parentUID.(string)
+		if ok && parentUIDStr != "" {
+			fmt.Printf("[INFO] Attempting to rebind child %s using parent %s\n",
+				child.FirebaseUID, parentUIDStr)
 
+			// Выполняем перепривязку
+			reboundChild, err := childService.RebindChild(input.Code)
+			if err != nil {
+				fmt.Printf("[WARN] Failed to rebind child during login: %v\n", err)
+				// Продолжаем выполнение даже при ошибке ребайндинга
+			} else {
+				// Обновляем объект ребенка после успешной перепривязки
+				child = reboundChild
+				fmt.Printf("[INFO] Child %s successfully rebound during login\n",
+					child.FirebaseUID)
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": child})
 }
 
