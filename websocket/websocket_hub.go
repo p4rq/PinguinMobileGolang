@@ -398,6 +398,8 @@ func (h *Hub) SendNotificationToChild(childToken string, parentID string) {
 
 // addLimitChangeMessageToChat добавляет сообщение об изменении лимитов в чат
 func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
+	log.Printf("[DEBUG] addLimitChangeMessageToChat начал выполнение: parentID=%s, childToken=%s", parentID, childToken)
+
 	if h.MessageService == nil {
 		log.Printf("[WebSocket] MessageService is nil, cannot add limit change message to chat")
 		return
@@ -413,16 +415,62 @@ func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
 	result := h.db.Where("device_token = ?", childToken).First(&child)
 	if result.Error != nil {
 		log.Printf("[WebSocket] Error finding child for chat message: %v", result.Error)
-		return
+
+		// Пробуем найти ребенка по частичному токену (первые 20 символов)
+		if len(childToken) > 20 {
+			shortToken := childToken[:20]
+			log.Printf("[WebSocket] Trying to find child with partial token: %s...", shortToken)
+			result = h.db.Where("device_token LIKE ?", shortToken+"%").First(&child)
+			if result.Error != nil {
+				log.Printf("[WebSocket] Still cannot find child with partial token: %v", result.Error)
+
+				// Если не нашли, создаем сообщение без имени ребенка
+				chatMessage := models.ChatMessage{
+					ParentID:   parentID,
+					SenderID:   "system",
+					SenderName: "Система",
+					Message:    fmt.Sprintf("Обновлены настройки лимитов для ребенка (токен: %s...)", childToken[:10]),
+				}
+
+				if err := h.MessageService.SaveMessage(&chatMessage); err != nil {
+					log.Printf("[WebSocket] Error saving limit change chat message: %v", err)
+					return
+				}
+
+				// Отправляем сообщение всем клиентам
+				wsMessage := WebSocketMessage{
+					Type:       "chat_message",
+					ParentID:   parentID,
+					SenderID:   chatMessage.SenderID,
+					SenderName: chatMessage.SenderName,
+					Message:    chatMessage.Message,
+					Timestamp:  time.Now(),
+					ChildToken: childToken, // Добавляем токен ребенка в сообщение
+				}
+
+				h.BroadcastMessage(wsMessage)
+				return
+			}
+		} else {
+			return
+		}
 	}
 
-	// Создаем сообщение для чата
+	log.Printf("[DEBUG] Найден ребенок %s (ID: %d) с токеном %s",
+		child.Name, child.ID, childToken)
+
+	// Получаем имя ребенка, используя пустую строку, если оно не задано
+	childName := child.Name
+	if childName == "" {
+		childName = "Без имени"
+	}
+
+	// Создаем сообщение для чата с именем ребенка
 	chatMessage := models.ChatMessage{
 		ParentID:   parentID,
 		SenderID:   "system",
 		SenderName: "Система",
-		Message:    fmt.Sprintf("Обновлены настройки лимитов для ребенка %s", child.Name),
-		// ReceiverID: "", // Всем в семье
+		Message:    fmt.Sprintf("Обновлены настройки лимитов для ребенка %s", childName),
 	}
 
 	// Сохраняем в базу данных
@@ -430,6 +478,8 @@ func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
 		log.Printf("[WebSocket] Error saving limit change chat message: %v", err)
 		return
 	}
+
+	log.Printf("[DEBUG] Сообщение сохранено в базу данных")
 
 	// Отправляем сообщение всем клиентам
 	wsMessage := WebSocketMessage{
@@ -439,8 +489,11 @@ func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
 		SenderName: chatMessage.SenderName,
 		Message:    chatMessage.Message,
 		Timestamp:  time.Now(),
+		ChildToken: childToken, // Добавляем токен ребенка в сообщение
 	}
 
+	log.Printf("[DEBUG] Отправляем сообщение через BroadcastMessage с токеном ребенка")
 	h.BroadcastMessage(wsMessage)
+
 	log.Printf("[WebSocket] Added limit change message to chat for family %s", parentID)
 }

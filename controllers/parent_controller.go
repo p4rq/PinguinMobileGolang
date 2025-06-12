@@ -327,15 +327,20 @@ func BlockAppsTempOnce(c *gin.Context) {
 	// Получаем токен устройства ребенка для отправки уведомлений через другой контроллер
 	child, err := GetChildData(request.ChildFirebaseUID)
 	if err != nil {
-		// Логируем ошибку, но продолжаем выполнение
-		fmt.Printf("[ERROR] BlockAppsTempOnce: Не удалось найти ребенка для уведомлений: %v\n", err)
+		fmt.Printf("[ERROR] BlockAppsTempOnce: Не удалось получить данные ребенка для WebSocket: %v\n", err)
 	} else if child != nil && child.DeviceToken != "" {
-		// Вызываем метод из websocket_controller для отправки уведомления
-		fmt.Printf("[WebSocket] BlockAppsTempOnce: Отправка уведомления о смене лимитов для родителя %s, ребенка %s\n",
-			parentFirebaseUID, request.ChildFirebaseUID)
-
+		fmt.Printf("[WebSocket] BlockAppsTempOnce: Отправляем уведомление о смене лимитов для ребенка %s\n", child.Name)
 		// Асинхронно отправляем уведомление через WebSocket
-		go NotifyLimitChange(parentFirebaseUID, child.DeviceToken)
+		go NotifyLimitChange(parentFirebaseUID, child.DeviceToken) // ИСПРАВЛЕНО: parentFirebaseUID вместо request.ParentFirebaseUID
+		fmt.Printf("[WebSocket] BlockAppsTempOnce: Уведомление поставлено в очередь\n")
+	} else {
+		var reason string
+		if child == nil {
+			reason = "ребенок не найден"
+		} else {
+			reason = "отсутствует device_token"
+		}
+		fmt.Printf("[WARN] BlockAppsTempOnce: Не удалось отправить WebSocket уведомление (%s)\n", reason)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -626,7 +631,24 @@ func ManageAppTimeRules(c *gin.Context) {
 			}
 
 			fmt.Printf("[ManageAppTimeRules] Итоговый ответ содержит %d групп блоков\n", len(groupedResult))
-
+			// После успешного создания/обновления блоков отправляем уведомление через WebSocket
+			child, err := GetChildData(request.ChildFirebaseUID)
+			if err != nil {
+				fmt.Printf("[ERROR] ManageAppTimeRules: Не удалось получить данные ребенка для WebSocket: %v\n", err)
+			} else if child != nil && child.DeviceToken != "" {
+				fmt.Printf("[WebSocket] ManageAppTimeRules: Отправляем уведомление о смене лимитов для ребенка %s\n", child.Name)
+				// Асинхронно отправляем уведомление через WebSocket
+				go NotifyLimitChange(request.ParentFirebaseUID, child.DeviceToken)
+				fmt.Printf("[WebSocket] ManageAppTimeRules: Уведомление поставлено в очередь\n")
+			} else {
+				var reason string
+				if child == nil {
+					reason = "ребенок не найден"
+				} else {
+					reason = "отсутствует device_token"
+				}
+				fmt.Printf("[WARN] ManageAppTimeRules: Не удалось отправить WebSocket уведомление (%s)\n", reason)
+			}
 			c.JSON(http.StatusOK, gin.H{
 				"message": "Apps blocked by time successfully",
 				"blocks":  groupedResult,
