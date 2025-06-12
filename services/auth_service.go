@@ -3,7 +3,6 @@ package services
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/repositories"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,8 +10,8 @@ import (
 	"os"
 	"time"
 
-	"firebase.google.com/go/auth"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -34,20 +33,19 @@ func init() {
 
 type Claims struct {
 	Email       string `json:"email"`
-	FirebaseUID string `json:"firebase_uid"`
+	FirebaseUID string `json:"firebase_uid"` // Переименуем в UserID в будущем
 	UserType    string `json:"user_type"`
 	jwt.StandardClaims
 }
 
 type AuthService struct {
-	ParentRepo   repositories.ParentRepository
-	ChildRepo    repositories.ChildRepository
-	DB           *gorm.DB
-	FirebaseAuth *auth.Client
+	ParentRepo repositories.ParentRepository
+	ChildRepo  repositories.ChildRepository
+	DB         *gorm.DB
 }
 
-func NewAuthService(parentRepo repositories.ParentRepository, childRepo repositories.ChildRepository, firebaseAuth *auth.Client) *AuthService {
-	return &AuthService{ParentRepo: parentRepo, ChildRepo: childRepo, FirebaseAuth: firebaseAuth}
+func NewAuthService(parentRepo repositories.ParentRepository, childRepo repositories.ChildRepository) *AuthService {
+	return &AuthService{ParentRepo: parentRepo, ChildRepo: childRepo}
 }
 
 func (s *AuthService) RegisterParent(lang, name, email, password string) (models.Parent, string, error) {
@@ -59,17 +57,8 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		return models.Parent{}, "", errors.New("password cannot be empty")
 	}
 
-	// Register user in Firebase
-	params := (&auth.UserToCreate{}).
-		Email(email).
-		Password(password).
-		DisplayName(name)
-
-	createdUser, err := s.FirebaseAuth.CreateUser(context.Background(), params)
-	if err != nil {
-		return models.Parent{}, "", err
-	}
-	firebaseUid := createdUser.UID
+	// Генерируем уникальный идентификатор пользователя (вместо Firebase UID)
+	userID := uuid.New().String()
 
 	// Generate unique 4-digit code
 	var code string
@@ -103,9 +92,8 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 		Family:        "[]",
 		Code:          code,
 		CodeExpiresAt: &codeExpiresAt, // Добавляем срок действия кода
-		FirebaseUID:   firebaseUid,
-		EmailVerified: false, // Email изначально не подтвержден
-
+		FirebaseUID:   userID,         // Используем UUID вместо Firebase UID
+		EmailVerified: false,          // Email изначально не подтвержден
 	}
 
 	if err := s.ParentRepo.Save(parent); err != nil {
@@ -116,8 +104,8 @@ func (s *AuthService) RegisterParent(lang, name, email, password string) (models
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
 		Email:       email,
-		FirebaseUID: firebaseUid, // Добавляем FirebaseUID в токен
-		UserType:    "parent",    // Указываем тип пользователя
+		FirebaseUID: userID,   // Используем userID вместо Firebase UID
+		UserType:    "parent", // Указываем тип пользователя
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 		},
@@ -163,8 +151,8 @@ func (s *AuthService) LoginParent(email, password string) (models.Parent, string
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
 		Email:       email,
-		FirebaseUID: parent.FirebaseUID, // Добавляем FirebaseUID в токен
-		UserType:    "parent",           // Указываем тип пользователя
+		FirebaseUID: parent.FirebaseUID, // В будущем переименуем в UserID
+		UserType:    "parent",
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 		},
@@ -190,18 +178,8 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 		return models.Child{}, "", errors.New("parent code has expired")
 	}
 
-	// Register user in Firebase без имени (автоматическое имя)
-	params := (&auth.UserToCreate{})
-	// Устанавливаем DisplayName только если name не пустой
-	if name != "" {
-		params = params.DisplayName(name)
-	}
-
-	createdUser, err := s.FirebaseAuth.CreateUser(context.Background(), params)
-	if err != nil {
-		return models.Child{}, "", err
-	}
-	firebaseUid := createdUser.UID
+	// Генерируем уникальный ID для ребенка (вместо Firebase)
+	userID := uuid.New().String()
 
 	// Generate unique code for the child
 	var childCode string
@@ -228,9 +206,9 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 
 	child := models.Child{
 		Lang:        lang,
-		Name:        "", // Устанавливаем пустое имя
+		Name:        name, // Используем переданное имя
 		Family:      string(familyJSON),
-		FirebaseUID: firebaseUid,
+		FirebaseUID: userID, // Используем UUID вместо Firebase UID
 		IsBinded:    true,
 		Code:        childCode,
 		Role:        "child",
@@ -283,8 +261,8 @@ func (s *AuthService) RegisterChild(lang, code, name string) (models.Child, stri
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
 		Email:       child.FirebaseUID, // В случае с ребенком email может не быть, используем FirebaseUID
-		FirebaseUID: firebaseUid,       // Добавляем FirebaseUID в токен
-		UserType:    "child",           // Указываем тип пользователя - "child"
+		FirebaseUID: userID,            // Используем userID
+		UserType:    "child",
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
 		},
@@ -353,6 +331,7 @@ func (s *AuthService) VerifyToken(uid string) (interface{}, error) {
 
 	return nil, errors.New("user not found")
 }
+
 func (s *AuthService) RefreshParentCode(firebaseUID string) (models.Parent, error) {
 	// Находим родителя
 	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
@@ -386,6 +365,7 @@ func (s *AuthService) RefreshParentCode(firebaseUID string) (models.Parent, erro
 
 	return parent, nil
 }
+
 func (s *AuthService) IsParentCodeValid(code string) (bool, error) {
 	parent, err := s.ParentRepo.FindByCode(code)
 	if err != nil {
@@ -399,6 +379,7 @@ func (s *AuthService) IsParentCodeValid(code string) (bool, error) {
 
 	return true, nil
 }
+
 func (s *AuthService) EnsureValidParentCode(firebaseUID string) (models.Parent, error) {
 	// Находим родителя
 	parent, err := s.ParentRepo.FindByFirebaseUID(firebaseUID)
@@ -416,14 +397,14 @@ func (s *AuthService) EnsureValidParentCode(firebaseUID string) (models.Parent, 
 	return parent, nil
 }
 
-// GenerateToken создает JWT токен для пользователя по его Firebase UID
-func (s *AuthService) GenerateToken(firebaseUID string) (string, error) {
+// GenerateToken создает JWT токен для пользователя по его UID
+func (s *AuthService) GenerateToken(userID string) (string, error) {
 	// Проверяем тип пользователя (родитель или ребенок)
-	parentExists, _ := s.ParentRepo.FindByFirebaseUID(firebaseUID)
+	parentExists, _ := s.ParentRepo.FindByFirebaseUID(userID)
 	userType := "parent"
 
 	if parentExists.ID == 0 {
-		childExists, _ := s.ChildRepo.FindByFirebaseUID(firebaseUID)
+		childExists, _ := s.ChildRepo.FindByFirebaseUID(userID)
 		if childExists.ID != 0 {
 			userType = "child"
 		}
@@ -432,7 +413,7 @@ func (s *AuthService) GenerateToken(firebaseUID string) (string, error) {
 	// Создаем токен с использованием той же структуры Claims
 	expirationTime := time.Now().Add(24 * time.Hour * 7) // 7 дней
 	claims := &Claims{
-		FirebaseUID: firebaseUID,
+		FirebaseUID: userID,
 		UserType:    userType,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
@@ -446,4 +427,96 @@ func (s *AuthService) GenerateToken(firebaseUID string) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+// VerifyEmail подтверждает email пользователя
+func (s *AuthService) VerifyEmail(email, code string) error {
+	parent, err := s.ParentRepo.FindByEmail(email)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Проверяем код верификации
+	if parent.Code != code {
+		return errors.New("invalid verification code")
+	}
+
+	// Проверяем срок действия кода
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		return errors.New("verification code expired")
+	}
+
+	// Устанавливаем флаг подтверждения email
+	parent.EmailVerified = true
+
+	// Сохраняем изменения в базе данных
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SendPasswordResetCode отправляет код для сброса пароля
+func (s *AuthService) SendPasswordResetCode(email string) error {
+	parent, err := s.ParentRepo.FindByEmail(email)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Генерируем новый код
+	resetCode := fmt.Sprintf("%04d", 1000+rand.Intn(9000))
+	codeExpiresAt := time.Now().Add(1 * time.Hour) // Код действителен 1 час
+
+	// Используем поле Code вместо ResetCode
+	parent.Code = resetCode
+	parent.CodeExpiresAt = &codeExpiresAt
+
+	// Сохраняем изменения
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return err
+	}
+
+	// TODO: Отправить email с кодом сброса пароля
+	// Вместо Firebase используйте свой сервис отправки email
+
+	return nil
+}
+
+// ResetPassword сбрасывает пароль с помощью кода
+func (s *AuthService) ResetPassword(email, code, newPassword string) error {
+	parent, err := s.ParentRepo.FindByEmail(email)
+	if err != nil {
+		return errors.New("parent not found")
+	}
+
+	// Проверяем код сброса (используем поле Code)
+	if parent.Code != code {
+		return errors.New("invalid reset code")
+	}
+
+	// Проверяем срок действия кода
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		return errors.New("reset code expired")
+	}
+
+	// Хешируем новый пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// Обновляем пароль и генерируем новый код (чтобы старый не использовался повторно)
+	parent.Password = string(hashedPassword)
+	newCode := fmt.Sprintf("%04d", 1000+rand.Intn(9000))
+	parent.Code = newCode
+	codeExpiresAt := time.Now().Add(24 * time.Hour)
+	parent.CodeExpiresAt = &codeExpiresAt
+
+	// Сохраняем изменения
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return err
+	}
+
+	return nil
 }

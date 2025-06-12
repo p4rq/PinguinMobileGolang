@@ -86,7 +86,7 @@ func main() {
 	chatRepo := impl.NewChatRepository(config.DB)
 
 	// Initialize services
-	authService := services.NewAuthService(parentRepo, childRepo, config.FirebaseAuth)
+	authService := services.NewAuthService(parentRepo, childRepo)
 	chatService := services.NewChatService(chatRepo, parentRepo, childRepo)
 
 	// Инициализируем Firebase app

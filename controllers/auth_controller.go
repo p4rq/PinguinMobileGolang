@@ -681,7 +681,7 @@ func ForgotPassword(c *gin.Context) {
 	}
 
 	// Генерируем код сброса пароля и сохраняем его
-	err = parentService.SendPasswordResetCode(&parent)
+	err = parentService.SendPasswordResetCode(parent.Email)
 	if err != nil {
 		fmt.Printf("Error sending password reset code: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка отправки кода сброса пароля"})
@@ -708,7 +708,7 @@ func ResetPassword(c *gin.Context) {
 	}
 
 	// Проверяем код и сбрасываем пароль
-	err := parentService.ResetPasswordWithCode(input.Email, input.Code, input.NewPassword)
+	err := authService.ResetPassword(input.Email, input.Code, input.NewPassword)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

@@ -482,7 +482,7 @@ func CancelOneTimeBlocks(c *gin.Context) {
 	})
 }
 
-// ManageAppTimeRules обрабатывает как блокировку, так и разблокировку приложений по времени
+// ManageAppTimeRules обрабатывает запрос на блокировку/разблокировку приложений по расписанию
 func ManageAppTimeRules(c *gin.Context) {
 	fmt.Println("[ManageAppTimeRules] Начало обработки запроса")
 

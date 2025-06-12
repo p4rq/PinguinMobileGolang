@@ -114,12 +114,59 @@ func (h *Hub) registerClient(client *Client) {
 		h.clients[client.ParentID] = make(map[*Client]bool)
 	}
 
+	// Проверяем, существует ли уже клиент с таким UserID в этой семье
+	for existingClient := range h.clients[client.ParentID] {
+		if existingClient.UserID == client.UserID {
+			log.Printf("[WebSocket] Клиент %s уже зарегистрирован в семье %s, заменяем его",
+				client.UserID, client.ParentID)
+
+			// Удаляем старый клиент
+			delete(h.clients[client.ParentID], existingClient)
+			close(existingClient.send) // Закрываем канал старого клиента
+			break
+		}
+	}
+
 	// Добавляем клиента в семью
 	h.clients[client.ParentID][client] = true
-	log.Printf("Клиент %s добавлен в семью %s", client.UserID, client.ParentID)
+	log.Printf("[WebSocket] Клиент %s добавлен в семью %s", client.UserID, client.ParentID)
 
-	// Загружаем и отправляем историю сообщений клиенту
+	// Загружаем и отправляем историю сообщений клиенту (ТОЛЬКО один раз)
 	go h.sendMessageHistory(client)
+
+	// Отправляем сообщение о присоединении только один раз и только если указаны имя и ID пользователя
+	if client.UserID != "" && client.UserName != "" {
+		joinMessageText := fmt.Sprintf("%s присоединился к чату", client.UserName)
+		log.Printf("[WebSocket] Отправляем сообщение о присоединении: %s", joinMessageText)
+
+		// Создаем системное сообщение о присоединении
+		joinMessage := WebSocketMessage{
+			Type:       "chat_message",
+			ParentID:   client.ParentID,
+			SenderID:   "system",
+			SenderName: "Система",
+			Message:    joinMessageText,
+			Timestamp:  time.Now(),
+		}
+
+		// Сохраняем сообщение о присоединении в базе данных и отправляем всем КРОМЕ текущего клиента
+		if h.MessageService != nil {
+			chatMessage := models.ChatMessage{
+				ParentID:   client.ParentID,
+				SenderID:   "system",
+				SenderName: "Система",
+				Message:    joinMessageText,
+			}
+
+			if err := h.MessageService.SaveMessage(&chatMessage); err != nil {
+				log.Printf("[WebSocket] Ошибка при сохранении сообщения о присоединении: %v", err)
+			} else {
+				// Вместо BroadcastMessage используем прямую отправку другим клиентам,
+				// чтобы избежать повторной отправки сообщения о присоединении
+				h.sendMessageToOthers(joinMessage, client)
+			}
+		}
+	}
 }
 
 // unregisterClient внутренний метод для отключения клиента
@@ -210,6 +257,33 @@ func (h *Hub) broadcastMessage(message WebSocketMessage) {
 		} else {
 			log.Printf("[WebSocket] Skipping push notification for system join message: %v", message.Message)
 		}
+	}
+}
+
+// sendMessageToOthers отправляет сообщение всем клиентам, кроме указанного
+func (h *Hub) sendMessageToOthers(message WebSocketMessage, excludeClient *Client) {
+	h.mu.Lock()
+
+	// Проверяем наличие клиентов для указанного parent_id
+	clients, ok := h.clients[message.ParentID]
+	if !ok || len(clients) == 0 {
+		h.mu.Unlock()
+		return
+	}
+
+	// Копируем клиентов для безопасной итерации
+	clientsCopy := make([]*Client, 0, len(clients))
+	for client := range clients {
+		if client != excludeClient { // Исключаем указанного клиента
+			clientsCopy = append(clientsCopy, client)
+		}
+	}
+
+	h.mu.Unlock()
+
+	// Отправляем сообщение каждому клиенту
+	for _, client := range clientsCopy {
+		client.Send(message)
 	}
 }
 
@@ -398,6 +472,8 @@ func (h *Hub) SendNotificationToChild(childToken string, parentID string) {
 
 // addLimitChangeMessageToChat добавляет сообщение об изменении лимитов в чат
 func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
+	log.Printf("[DEBUG] addLimitChangeMessageToChat начал выполнение: parentID=%s, childToken=%s", parentID, childToken)
+
 	if h.MessageService == nil {
 		log.Printf("[WebSocket] MessageService is nil, cannot add limit change message to chat")
 		return
@@ -416,20 +492,32 @@ func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
 		return
 	}
 
+	log.Printf("[DEBUG] Найден ребенок: %s (ID: %d) с токеном %s",
+		child.Name, child.ID, childToken)
+
+	// Если имя ребенка пустое, используем стандартный текст
+	childName := child.Name
+	if childName == "" {
+		childName = "ребенка"
+	}
+
 	// Создаем сообщение для чата
 	chatMessage := models.ChatMessage{
 		ParentID:   parentID,
 		SenderID:   "system",
 		SenderName: "Система",
-		Message:    fmt.Sprintf("Обновлены настройки лимитов для ребенка %s", child.Name),
-		// ReceiverID: "", // Всем в семье
+		Message:    fmt.Sprintf("Обновлены настройки лимитов для %s", childName),
 	}
+
+	log.Printf("[DEBUG] Создано сообщение: %s", chatMessage.Message)
 
 	// Сохраняем в базу данных
 	if err := h.MessageService.SaveMessage(&chatMessage); err != nil {
 		log.Printf("[WebSocket] Error saving limit change chat message: %v", err)
 		return
 	}
+
+	log.Printf("[DEBUG] Сообщение сохранено в базу данных")
 
 	// Отправляем сообщение всем клиентам
 	wsMessage := WebSocketMessage{
@@ -441,6 +529,8 @@ func (h *Hub) addLimitChangeMessageToChat(parentID string, childToken string) {
 		Timestamp:  time.Now(),
 	}
 
-	h.BroadcastMessage(wsMessage)
+	log.Printf("[DEBUG] Отправляем сообщение через BroadcastMessage")
+	h.BroadcastMessage(wsMessage) // ЭТУ СТРОКУ НУЖНО ДОБАВИТЬ!
+
 	log.Printf("[WebSocket] Added limit change message to chat for family %s", parentID)
 }

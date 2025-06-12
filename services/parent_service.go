@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"firebase.google.com/go/v4/auth"
@@ -971,6 +972,12 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 				}
 			}
 		}
+		if WebSocketHub != nil && child.DeviceToken != "" {
+			fmt.Printf("[WEBSOCKET] ManageAppTimeRules: Отправка уведомления о создании правила блокировки для ребенка %s\n", childUID)
+			go WebSocketHub.NotifyLimitChange(parentUID, child.DeviceToken)
+		} else {
+			fmt.Printf("[WARN] ManageAppTimeRules: WebSocketHub не инициализирован или токен устройства пуст\n")
+		}
 		// Отправляем push-уведомление после успешного добавления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" {
 			// Формируем заголовок и содержание уведомления
@@ -1106,6 +1113,12 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 					fmt.Printf("[DEBUG] Флаг IsChangeLimit успешно установлен в true\n")
 				}
 			}
+		}
+		if WebSocketHub != nil && child.DeviceToken != "" {
+			fmt.Printf("[WEBSOCKET] ManageAppTimeRules: Отправка уведомления об отмене правила блокировки для ребенка %s\n", childUID)
+			go WebSocketHub.NotifyLimitChange(parentUID, child.DeviceToken)
+		} else {
+			fmt.Printf("[WARN] ManageAppTimeRules: WebSocketHub не инициализирован или токен устройства пуст\n")
 		}
 		// Отправляем push-уведомление после успешного удаления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" && len(removedAppPackages) > 0 {
@@ -1431,83 +1444,65 @@ func (s *ParentService) FindByEmail(email string) (models.Parent, error) {
 	return s.ParentRepo.FindByEmail(email)
 }
 
-// SendPasswordResetCode генерирует и отправляет код сброса пароля
-func (s *ParentService) SendPasswordResetCode(parent *models.Parent) error {
-	// Генерируем случайный код (6 цифр)
-	resetCode := GenerateVerificationCode() // Используем тот же генератор, что и для email
-
-	// Устанавливаем срок действия кода (24 часа)
-	expiresAt := time.Now().Add(24 * time.Hour)
-
-	// Сохраняем код и срок его действия
-	parent.PasswordResetCode = resetCode
-	parent.PasswordResetCodeExpiresAt = expiresAt
-
-	// Сохраняем изменения в базе данных
-	if err := s.ParentRepo.Save(*parent); err != nil {
-		return fmt.Errorf("ошибка сохранения кода сброса: %w", err)
-	}
-
-	// Отправляем код на email
-	emailService := NewEmailService()
-	err := emailService.SendPasswordResetEmail(parent.Email, resetCode)
+// SendPasswordResetCode отправляет код для сброса пароля
+func (s *ParentService) SendPasswordResetCode(email string) error {
+	parent, err := s.ParentRepo.FindByEmail(email)
 	if err != nil {
-		return fmt.Errorf("ошибка отправки email: %w", err)
+		return errors.New("parent not found")
 	}
+
+	// Генерируем новый код
+	resetCode := fmt.Sprintf("%04d", 1000+rand.Intn(9000))
+	codeExpiresAt := time.Now().Add(1 * time.Hour) // Код действителен 1 час
+
+	// Используем поле Code вместо ResetCode
+	parent.Code = resetCode
+	parent.CodeExpiresAt = &codeExpiresAt
+
+	// Сохраняем изменения
+	if err := s.ParentRepo.Save(parent); err != nil {
+		return err
+	}
+
+	// TODO: Отправить email с кодом сброса пароля
+	// Вместо Firebase используйте свой сервис отправки email
 
 	return nil
 }
 
-// ResetPasswordWithCode проверяет код и сбрасывает пароль
-func (s *ParentService) ResetPasswordWithCode(email, code, newPassword string) error {
-	// Находим пользователя по email
+// ResetPassword сбрасывает пароль с помощью кода
+func (s *ParentService) ResetPassword(email, code, newPassword string) error {
 	parent, err := s.ParentRepo.FindByEmail(email)
 	if err != nil {
-		return fmt.Errorf("пользователь не найден")
+		return errors.New("parent not found")
 	}
 
-	// Проверяем, что код установлен
-	if parent.PasswordResetCode == "" {
-		return fmt.Errorf("код сброса пароля не был запрошен или уже использован")
+	// Проверяем код сброса (используем поле Code)
+	if parent.Code != code {
+		return errors.New("invalid reset code")
 	}
 
-	// Проверяем, что код не истек
-	if time.Now().After(parent.PasswordResetCodeExpiresAt) {
-		return fmt.Errorf("срок действия кода истек, запросите новый код")
+	// Проверяем срок действия кода
+	if parent.CodeExpiresAt == nil || time.Now().After(*parent.CodeExpiresAt) {
+		return errors.New("reset code expired")
 	}
 
-	// Проверяем корректность кода
-	if parent.PasswordResetCode != code {
-		return fmt.Errorf("неверный код сброса пароля")
-	}
-
-	// Сбрасываем пароль в Firebase
-	ctx := context.Background()
-	client, err := GetAuthClient()
-	if err != nil {
-		return fmt.Errorf("ошибка инициализации Firebase: %w", err)
-	}
-
-	// Обновляем пароль в Firebase
-	userToUpdate := (&auth.UserToUpdate{}).Password(newPassword)
-	if _, err := client.UpdateUser(ctx, parent.FirebaseUID, userToUpdate); err != nil {
-		return fmt.Errorf("ошибка обновления пароля в Firebase: %w", err)
-	}
-
-	// Хешируем новый пароль для нашей БД
+	// Хешируем новый пароль
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("ошибка хеширования пароля: %w", err)
+		return err
 	}
 
-	// Обновляем пароль и сбрасываем код сброса
+	// Обновляем пароль и генерируем новый код (чтобы старый не использовался повторно)
 	parent.Password = string(hashedPassword)
-	parent.PasswordResetCode = ""
-	parent.PasswordResetCodeExpiresAt = time.Time{}
+	newCode := fmt.Sprintf("%04d", 1000+rand.Intn(9000))
+	parent.Code = newCode
+	codeExpiresAt := time.Now().Add(24 * time.Hour)
+	parent.CodeExpiresAt = &codeExpiresAt
 
 	// Сохраняем изменения
 	if err := s.ParentRepo.Save(parent); err != nil {
-		return fmt.Errorf("ошибка сохранения нового пароля: %w", err)
+		return err
 	}
 
 	return nil
