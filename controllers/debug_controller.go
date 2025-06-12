@@ -1,154 +1,34 @@
 package controllers
 
 import (
+	"PinguinMobile/config"
+	"PinguinMobile/models"
 	"PinguinMobile/services"
-	"context"
-	"fmt"
-	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	firebase "firebase.google.com/go/v4"
-	"firebase.google.com/go/v4/messaging"
-	"google.golang.org/api/option"
 )
 
-// Сервис уведомлений должен быть доступен через переменную
+// Используем общий сервис уведомлений
 var debugNotificationService *services.NotificationService
 
-// Устанавливаем сервис
-func SetDebugNotificationService(service *services.NotificationService) {
-	debugNotificationService = service
+// Сервис ребенка для получения данных
+var debugChildService *services.ChildService
+
+// Сервис родителя для получения данных
+var debugParentService *services.ParentService
+
+// Инициализируем сервисы для отладочного контроллера
+func SetDebugServices(notifySrv *services.NotificationService,
+	childSrv *services.ChildService,
+	parentSrv *services.ParentService) {
+	debugNotificationService = notifySrv
+	debugChildService = childSrv
+	debugParentService = parentSrv
 }
 
-// DebugPushNotification отправляет тестовое push-уведомление
-func DebugPushNotification(c *gin.Context) {
-	var request struct {
-		DeviceToken string            `json:"device_token" binding:"required"`
-		Title       string            `json:"title" binding:"required"`
-		Body        string            `json:"body" binding:"required"`
-		Data        map[string]string `json:"data"`
-		Lang        string            `json:"lang"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Устанавливаем язык по умолчанию, если не указан
-	if request.Lang == "" {
-		request.Lang = "ru"
-	}
-
-	// Создаем контекст
-	ctx := context.Background()
-
-	// ====== ВАЖНОЕ ИСПРАВЛЕНИЕ: ДОБАВЛЯЕМ ЯВНУЮ КОНФИГУРАЦИЮ FIREBASE ======
-	// Проверяем переменную окружения PROJECT_ID или берем значение по умолчанию
-	projectID := os.Getenv("FIREBASE_PROJECT_ID")
-	if projectID == "" {
-		projectID = "pinguin-46f73" // Укажите здесь ID вашего проекта Firebase
-	}
-
-	// Создаем конфигурацию Firebase с явным указанием projectID
-	config := &firebase.Config{
-		ProjectID: projectID,
-	}
-
-	// Создаем опции Firebase
-	var opts []option.ClientOption
-
-	// Проверяем наличие файла учетных данных службы или переменной окружения
-	credentialsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	if credentialsPath != "" {
-		log.Printf("[DEBUG] Using Firebase credentials from file: %s", credentialsPath)
-		opts = append(opts, option.WithCredentialsFile(credentialsPath))
-	} else {
-		// Используем JSON строку из переменной окружения
-		credentialsJSON := os.Getenv("FIREBASE_CREDENTIALS_JSON")
-		if credentialsJSON != "" {
-			log.Printf("[DEBUG] Using Firebase credentials from environment JSON")
-			opts = append(opts, option.WithCredentialsJSON([]byte(credentialsJSON)))
-		} else {
-			// Для локального тестирования используем файл из директории проекта
-			defaultPath := "pinguin-46f73-firebase-adminsdk-fbsvc-8610ba7d3e.json"
-			if _, err := os.Stat(defaultPath); err == nil {
-				log.Printf("[DEBUG] Using Firebase credentials from default path: %s", defaultPath)
-				opts = append(opts, option.WithCredentialsFile(defaultPath))
-			} else {
-				// Если не нашли файл, возвращаем ошибку
-				errMsg := "Firebase service account credentials not found. Please set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_CREDENTIALS_JSON"
-				log.Printf("[ERROR] %s", errMsg)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
-				return
-			}
-		}
-	}
-
-	// Инициализируем Firebase с явной конфигурацией
-	app, err := firebase.NewApp(ctx, config, opts...)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to initialize Firebase app: %v", err)
-		log.Printf("[ERROR] %s", errMsg)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
-		return
-	}
-
-	log.Printf("[DEBUG] Firebase app initialized successfully")
-
-	// Инициализируем FCM клиент
-	fcmClient, err := app.Messaging(ctx)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to initialize FCM client: %v", err)
-		log.Printf("[ERROR] %s", errMsg)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
-		return
-	}
-
-	log.Printf("[DEBUG] FCM client initialized successfully")
-
-	// Создаем и отправляем сообщение
-	message := &messaging.Message{
-		Notification: &messaging.Notification{
-			Title: request.Title,
-			Body:  request.Body,
-		},
-		Data:  request.Data,
-		Token: request.DeviceToken,
-	}
-
-	log.Printf("[DEBUG] Sending notification to token: %s...",
-		request.DeviceToken[:10])
-
-	// Отправляем сообщение
-	response, err := fcmClient.Send(ctx, message)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to send FCM message: %v", err)
-		log.Printf("[ERROR] %s", errMsg)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
-		return
-	}
-
-	log.Printf("[SUCCESS] Message sent successfully: %s", response)
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Push notification sent successfully",
-		"details": gin.H{
-			"device_token": request.DeviceToken[:10] + "...",
-			"response_id":  response,
-			"title":        request.Title,
-			"body":         request.Body,
-			"project_id":   projectID,
-		},
-	})
-}
-
-// TestFCMNotification отправляет тестовое уведомление через FCM
+// TestFCMNotification отправляет тестовое уведомление по произвольному токену устройства
 func TestFCMNotification(c *gin.Context) {
 	var request struct {
 		Token string `json:"token" binding:"required"` // FCM токен устройства
@@ -159,6 +39,15 @@ func TestFCMNotification(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Проверяем, инициализирован ли сервис уведомлений
+	if debugNotificationService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Сервис уведомлений не инициализирован. Добавьте вызов SetDebugServices в main.go",
+		})
 		return
 	}
 
@@ -187,6 +76,213 @@ func TestFCMNotification(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "Уведомление отправлено",
+		"message": "Уведомление успешно отправлено",
+	})
+}
+
+// TestChildNotification отправляет уведомление ребенку по его Firebase UID
+func TestChildNotification(c *gin.Context) {
+	var request struct {
+		FirebaseUID string `json:"firebase_uid" binding:"required"` // Firebase UID ребенка
+		Title       string `json:"title" binding:"required"`        // Заголовок уведомления
+		Body        string `json:"body" binding:"required"`         // Текст уведомления
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Проверяем, инициализирован ли сервис уведомлений
+	if debugNotificationService == nil || debugChildService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Сервисы не инициализированы. Добавьте вызов SetDebugServices в main.go",
+		})
+		return
+	}
+
+	// Получаем данные ребенка
+	child, err := debugChildService.ReadChild(request.FirebaseUID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Ребенок не найден: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем наличие токена устройства
+	if child.DeviceToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "У ребенка отсутствует токен устройства",
+		})
+		return
+	}
+
+	// Добавим данные для уведомления
+	data := map[string]string{
+		"notification_type": "test_notification",
+		"child_id":          "test",
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}
+
+	// Отправляем уведомление
+	err = debugNotificationService.SendNotification(
+		child.DeviceToken,
+		request.Title,
+		request.Body,
+		data,
+		child.Lang,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"message":       "Уведомление успешно отправлено ребенку",
+		"token_preview": child.DeviceToken[:15] + "...",
+		"token_length":  len(child.DeviceToken),
+	})
+}
+
+// TestParentNotification отправляет уведомление родителю по его Firebase UID
+func TestParentNotification(c *gin.Context) {
+	var request struct {
+		FirebaseUID string `json:"firebase_uid" binding:"required"` // Firebase UID родителя
+		Title       string `json:"title" binding:"required"`        // Заголовок уведомления
+		Body        string `json:"body" binding:"required"`         // Текст уведомления
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Проверяем, инициализирован ли сервис уведомлений
+	if debugNotificationService == nil || debugParentService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Сервисы не инициализированы. Добавьте вызов SetDebugServices в main.go",
+		})
+		return
+	}
+
+	// Получаем данные родителя
+	parent, err := debugParentService.ReadParent(request.FirebaseUID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Родитель не найден: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем наличие токена устройства
+	if parent.DeviceToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "У родителя отсутствует токен устройства",
+		})
+		return
+	}
+
+	// Добавим данные для уведомления
+	data := map[string]string{
+		"notification_type": "test_notification",
+		"parent_id":         "test",
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}
+
+	// Отправляем уведомление
+	err = debugNotificationService.SendNotification(
+		parent.DeviceToken,
+		request.Title,
+		request.Body,
+		data,
+		parent.Lang,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"message":       "Уведомление успешно отправлено родителю",
+		"token_preview": parent.DeviceToken[:15] + "...",
+		"token_length":  len(parent.DeviceToken),
+	})
+}
+
+// GetAllDeviceTokens получает список всех FCM токенов в системе
+func GetAllDeviceTokens(c *gin.Context) {
+	// Получаем токены родителей
+	var parents []models.Parent
+	if err := config.DB.Select("id, name, firebase_uid, device_token").Find(&parents).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Получаем токены детей
+	var children []models.Child
+	if err := config.DB.Select("id, name, firebase_uid, device_token").Find(&children).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Формируем результат
+	parentTokens := make([]map[string]interface{}, 0)
+	for _, p := range parents {
+		if p.DeviceToken != "" {
+			tokenPreview := p.DeviceToken
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+
+			parentTokens = append(parentTokens, map[string]interface{}{
+				"id":                   p.ID,
+				"name":                 p.Name,
+				"firebase_uid":         p.FirebaseUID,
+				"device_token_preview": tokenPreview,
+				"device_token_length":  len(p.DeviceToken),
+				"device_token":         p.DeviceToken, // Полный токен для тестирования
+			})
+		}
+	}
+
+	childTokens := make([]map[string]interface{}, 0)
+	for _, c := range children {
+		if c.DeviceToken != "" {
+			tokenPreview := c.DeviceToken
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+
+			childTokens = append(childTokens, map[string]interface{}{
+				"id":                   c.ID,
+				"name":                 c.Name,
+				"firebase_uid":         c.FirebaseUID,
+				"device_token_preview": tokenPreview,
+				"device_token_length":  len(c.DeviceToken),
+				"device_token":         c.DeviceToken, // Полный токен для тестирования
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"parent_tokens": parentTokens,
+		"child_tokens":  childTokens,
 	})
 }

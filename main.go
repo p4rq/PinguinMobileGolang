@@ -121,7 +121,7 @@ func main() {
 	controllers.SetParentService(parentService)
 	controllers.SetChatService(chatService)
 	controllers.SetTranslationService(translationService)
-
+	controllers.SetDebugServices(notificationService, childService, parentService)
 	// 1. Создаем адаптер для ChatService
 	chatAdapter := &ChatServiceAdapter{
 		chatService: chatService,

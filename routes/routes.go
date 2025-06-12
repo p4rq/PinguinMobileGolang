@@ -24,9 +24,11 @@ func RegisterRoutes(r *gin.Engine) {
 	r.POST("/auth/forgot-password", controllers.ForgotPassword)
 	r.POST("/auth/reset-password", controllers.ResetPassword)
 	r.POST("/auth/change-password", middlewares.AuthMiddleware(), controllers.ChangePassword)
-	r.POST("/debug/test-push", controllers.DebugPushNotification)
+	// r.POST("/debug/test-push", controllers.DebugPushNotification)
 	r.POST("/debug/fcm/send", controllers.TestFCMNotification)
-
+	r.POST("/debug/fcm/child", controllers.TestChildNotification)
+	r.POST("/debug/fcm/parent", controllers.TestParentNotification)
+	r.GET("/debug/fcm/tokens", controllers.GetAllDeviceTokens)
 	// Protected routes
 	parents := r.Group("/parents")
 	parents.Use(middlewares.AuthMiddleware())
