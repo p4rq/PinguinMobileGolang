@@ -281,8 +281,19 @@ func (h *Hub) sendMessageHistory(client *Client) {
 // NotifyLimitChange улучшенная версия для отправки уведомлений о смене лимитов
 func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
 	// Создаем улучшенное сообщение для WebSocket
-	message := WebSocketMessage{
-		Type:          "limit_change",
+	chatMessage := WebSocketMessage{
+		Type:          "chat_message", // Клиенты обычно обрабатывают этот тип
+		ParentID:      parentID,
+		ChildToken:    childToken,
+		IsChangeLimit: true, // Флаг для отличия от обычных сообщений
+		Timestamp:     time.Now(),
+		SenderID:      "system",
+		SenderName:    "Система",
+		Message:       "Настройки лимитов были обновлены",
+	}
+
+	limitMessage := WebSocketMessage{
+		Type:          "limit_change", // Специализированный тип для лимитов
 		ParentID:      parentID,
 		ChildToken:    childToken,
 		IsChangeLimit: true,
@@ -312,7 +323,9 @@ func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
 		// Отправляем уведомление каждому клиенту-родителю
 		for _, client := range clientsCopy {
 			log.Printf("[WebSocket] Sending limit change notification to client %s", client.UserID)
-			client.Send(message)
+			client.Send(chatMessage)
+			client.Send(limitMessage) // Тип limit_change
+
 		}
 	}
 
