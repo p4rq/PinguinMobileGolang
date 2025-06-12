@@ -564,7 +564,7 @@ func TokenVerify(c *gin.Context) {
 func LoginChild(c *gin.Context) {
 	var input struct {
 		Code        string `json:"code" binding:"required"`
-		DeviceToken string `json:"device_token"` // Добавляем поле для токена устройства
+		DeviceToken string `json:"device_token"` // Токен устройства
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -572,47 +572,80 @@ func LoginChild(c *gin.Context) {
 		return
 	}
 
+	// Шаг 1: Базовая аутентификация ребенка
 	child, token, err := authService.LoginChild(input.Code)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Обновляем токен устройства, если он предоставлен
+	// Шаг 2: Обновление токена устройства
+	deviceTokenUpdated := false
 	if input.DeviceToken != "" && child.DeviceToken != input.DeviceToken {
 		err := childService.UpdateDeviceToken(child.FirebaseUID, input.DeviceToken)
 		if err != nil {
-			fmt.Printf("Error updating device token: %v\n", err)
-			// Продолжаем выполнение, даже если обновление не удалось
+			fmt.Printf("[ERROR] LoginChild: не удалось обновить токен устройства: %v\n", err)
 		} else {
-			// Получаем обновленные данные ребенка
+			deviceTokenUpdated = true
 			updatedChild, err := childService.ReadChild(child.FirebaseUID)
 			if err == nil {
 				child = updatedChild // Используем обновленного ребенка в ответе
 			}
 		}
 	}
+
+	// Шаг 3: Проверяем статус привязки и наличие родителя в контексте
+	needRebinding := !child.IsBinded // Если ребенок не привязан, пытаемся его привязать
+
+	// Проверяем наличие идентификатора родителя в контексте
 	parentUID, exists := c.Get("firebase_uid")
 	if exists && parentUID != nil {
 		parentUIDStr, ok := parentUID.(string)
 		if ok && parentUIDStr != "" {
-			fmt.Printf("[INFO] Attempting to rebind child %s using parent %s\n",
-				child.FirebaseUID, parentUIDStr)
-
-			// Выполняем перепривязку
-			reboundChild, err := childService.RebindChild(input.Code)
-			if err != nil {
-				fmt.Printf("[WARN] Failed to rebind child during login: %v\n", err)
-				// Продолжаем выполнение даже при ошибке ребайндинга
-			} else {
-				// Обновляем объект ребенка после успешной перепривязки
-				child = reboundChild
-				fmt.Printf("[INFO] Child %s successfully rebound during login\n",
-					child.FirebaseUID)
-			}
+			// Если родитель аутентифицирован, пытаемся привязать ребенка, независимо от текущего статуса
+			needRebinding = true // Принудительная привязка при наличии родителя
+			fmt.Printf("[INFO] LoginChild: Обнаружен родитель %s при входе ребенка %s\n",
+				parentUIDStr, child.FirebaseUID)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"message": true, "token": token, "user": child})
+
+	// Если нужна перепривязка или родитель аутентифицирован, выполняем привязку
+	if needRebinding {
+		fmt.Printf("[INFO] LoginChild: Выполняем привязку ребенка с кодом %s (текущий статус IsBinded: %v)\n",
+			input.Code, child.IsBinded)
+
+		reboundChild, err := childService.RebindChild(input.Code)
+		if err != nil {
+			fmt.Printf("[WARN] LoginChild: Не удалось привязать ребенка: %v\n", err)
+		} else {
+			child = reboundChild // Обновляем объект ребенка после успешной привязки
+			fmt.Printf("[INFO] LoginChild: Ребенок %s успешно привязан, новый статус IsBinded: %v\n",
+				child.FirebaseUID, child.IsBinded)
+		}
+	} else if deviceTokenUpdated {
+		// Если токен устройства обновлен, но перепривязка не требуется,
+		// проверяем, что флаг IsBinded сохранен правильно
+		if child.IsBinded {
+			fmt.Printf("[INFO] LoginChild: Сохранен статус привязки для ребенка %s\n", child.FirebaseUID)
+		}
+	}
+
+	// Проверяем финальный статус привязки перед отправкой ответа
+	// Это нужно для случаев, когда ребенок был привязан ранее, но статус не отразился в ответе
+	if child.IsBinded {
+		fmt.Printf("[INFO] LoginChild: Завершение с флагом привязки: %v для ребенка %s\n",
+			child.IsBinded, child.FirebaseUID)
+	} else {
+		fmt.Printf("[WARN] LoginChild: Завершение со статусом непривязанного ребенка %s\n",
+			child.FirebaseUID)
+	}
+
+	// Возвращаем результат клиенту
+	c.JSON(http.StatusOK, gin.H{
+		"message": true,
+		"token":   token,
+		"user":    child,
+	})
 }
 
 // ForgotPassword обрабатывает запрос на сброс пароля
