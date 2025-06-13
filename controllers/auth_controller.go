@@ -391,7 +391,7 @@ func TokenVerify(c *gin.Context) {
 						go func() {
 							if WebSocketHub != nil {
 								wsMessage := websocket.WebSocketMessage{
-									Type:       "permissions_change",
+									Type:       "chat_message",
 									ParentID:   parent.FirebaseUID,
 									ChildToken: child.DeviceToken,
 									SenderID:   "system",
@@ -404,7 +404,7 @@ func TokenVerify(c *gin.Context) {
 								// Также отправляем push-уведомление
 								if parent.DeviceToken != "" && WebSocketHub.NotifySrv != nil {
 									data := map[string]string{
-										"type":       "permissions_change",
+										"type":       "chat_message",
 										"child_name": child.Name,
 										"child_uid":  child.FirebaseUID,
 									}
