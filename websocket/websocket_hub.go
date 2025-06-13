@@ -178,10 +178,18 @@ func (h *Hub) broadcastMessage(message WebSocketMessage) {
 	// Дополнительная отправка уведомления, если это сообщение чата
 	if message.Type == "chat_message" && h.NotifySrv != nil {
 		_, isString := message.Message.(string)
-		isJoinMessage := isString && (message.SenderID == "system" || message.SenderID == "Система") &&
-			(strings.Contains(fmt.Sprintf("%v", message.Message), "присоединился к чату"))
+		isSystemMessage := isString && (message.SenderID == "system" || message.SenderID == "Система")
+		isJoinMessage := isSystemMessage && strings.Contains(fmt.Sprintf("%v", message.Message), "присоединился к чату")
 
-		if !isJoinMessage {
+		// Пропускаем сообщения о присоединении к чату
+		if isJoinMessage {
+			// Просто логируем, но не отправляем и не сохраняем
+			log.Printf("[WebSocket] Skipping join message: %v", message.Message)
+			return // Полностью прерываем обработку сообщения о присоединении
+		}
+
+		// Отправляем уведомление только для не-системных сообщений или системных, но не о присоединении
+		if !isSystemMessage || (isSystemMessage && !isJoinMessage) {
 			// Запускаем отправку в отдельной горутине
 			go func() {
 				// Дополнительные данные для FCM
