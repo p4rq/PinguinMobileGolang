@@ -943,6 +943,25 @@ func ManageOneTimeRules(c *gin.Context) {
 		}
 		fmt.Printf("[ManageOneTimeRules] BlockAppsTempOnce вернул %d блоков\n", len(blocks))
 
+		// Отправляем уведомление через WebSocket о смене лимитов
+		child, err := GetChildData(request.ChildFirebaseUID)
+		if err != nil {
+			fmt.Printf("[ERROR] ManageAppTimeRules: Не удалось получить данные ребенка для WebSocket: %v\n", err)
+		} else if child != nil && child.DeviceToken != "" {
+			fmt.Printf("[WebSocket] ManageAppTimeRules: Отправляем уведомление о новых лимитах для ребенка %s\n", child.Name)
+			// Асинхронно отправляем уведомление через WebSocket
+			go NotifyLimitChange(request.ParentFirebaseUID, child.DeviceToken)
+			fmt.Printf("[WebSocket] ManageAppTimeRules: Уведомление о лимитах поставлено в очередь\n")
+		} else {
+			var reason string
+			if child == nil {
+				reason = "ребенок не найден"
+			} else {
+				reason = "отсутствует device_token"
+			}
+			fmt.Printf("[WARN] ManageAppTimeRules: Не удалось отправить WebSocket уведомление (%s)\n", reason)
+		}
+
 		// Группируем результат для ответа
 		if len(blocks) > 0 {
 			fmt.Println("[ManageOneTimeRules] Группируем блоки для ответа")
