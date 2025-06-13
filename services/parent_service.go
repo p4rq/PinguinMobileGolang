@@ -971,6 +971,7 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 				}
 			}
 		}
+
 		// Отправляем push-уведомление после успешного добавления расписания блокировки
 		if operationResult == nil && s.NotifySrv != nil && child.DeviceToken != "" {
 			// Формируем заголовок и содержание уведомления

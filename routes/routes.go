@@ -35,18 +35,13 @@ func RegisterRoutes(r *gin.Engine) {
 	{
 		parents.GET("/:firebase_uid", controllers.ReadParent)
 		parents.PUT("/:firebase_uid", controllers.UpdateParent)
-		// parents.DELETE("/:firebase_uid", controllers.DeleteParent)
-		// parents.POST("/block/apps", controllers.BlockApps)
-		// parents.POST("/unblock/apps", controllers.UnblockApps)
-		// Новые маршруты для временной блокировки
+
 		parents.GET("/block/apps/time/:firebase_uid", controllers.GetTimeBlockedApps)
 		parents.POST("/apps/time-rules", controllers.ManageAppTimeRules)
-		// Маршруты для одноразовой блокировки
-		// parents.POST("/:firebase_uid/block-apps-once", controllers.BlockAppsTempOnce)
+
 		parents.GET("/block/apps/onetime/:firebase_uid", controllers.GetOneTimeBlocks) // Новый единый маршрут
 		parents.POST("/apps/onetime-rules", controllers.ManageOneTimeRules)
 
-		// parents.DELETE("/:firebase_uid/block-apps-once/:child_id", controllers.CancelOneTimeBlocks)
 	}
 
 	// Separate route group for unbind and monitor routes to avoid conflicts
@@ -79,19 +74,4 @@ func RegisterRoutes(r *gin.Engine) {
 		children.GET("/check-blocking", controllers.CheckAppBlocking)
 	}
 
-	// Chat routes
-	chat := r.Group("/chat")
-	chat.Use(middlewares.AuthMiddleware())
-	{
-		chat.POST("/messages/text", controllers.SendTextMessage)
-		chat.POST("/messages/media", controllers.SendMediaMessage)
-		chat.GET("/family/:parent_id/messages", controllers.GetFamilyMessages)
-		chat.GET("/private/:parent_id/:user_id", controllers.GetPrivateMessages)
-		chat.PUT("/messages/read", controllers.MarkAsRead)
-		chat.DELETE("/messages/:message_id", controllers.DeleteMessage)
-		chat.POST("/moderation", controllers.ModerateMessage)
-		chat.GET("/family/:parent_id/unread", controllers.GetUnreadCount)
-		chat.GET("/private/:parent_id/unread", controllers.GetUnreadPrivateCount)
-		chat.GET("/family/:parent_id/channels", controllers.GetChannelsList)
-	}
 }

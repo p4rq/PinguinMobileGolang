@@ -343,7 +343,8 @@ func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
 	// 3. Добавляем сообщение в чат для всей семьи
 	h.addLimitChangeMessageToChat(parentID, childToken)
 
-	// 4. Отправляем Push уведомления через FCM всей семье
+	// 4. Отправляем Push уведомления через FCM только ребенку,
+	// так как родитель сам инициировал изменение лимитов
 	if h.NotifySrv != nil {
 		go func() {
 			data := map[string]string{
@@ -352,16 +353,25 @@ func (h *Hub) NotifyLimitChange(parentID string, childToken string) {
 				"is_change_limit": "true",
 			}
 
-			// Отправляем уведомления всем членам семьи
-			if err := h.NotifySrv.SendNotificationToFamily(
-				parentID,
-				"Изменение лимитов",
-				"Были изменены настройки лимитов для ребенка",
-				data,
-			); err != nil {
-				log.Printf("[WebSocket] Error sending limit change push notification: %v", err)
+			// Получаем данные о ребенке, чтобы использовать его язык
+			var child models.Child
+			result := h.db.Where("device_token = ?", childToken).First(&child)
+			if result.Error == nil {
+				// Отправляем уведомление только ребенку
+				err := h.NotifySrv.SendNotification(
+					childToken,
+					"Изменение лимитов",
+					"Ваши настройки лимитов были обновлены",
+					data,
+					child.Lang)
+
+				if err != nil {
+					log.Printf("[WebSocket] Error sending limit change notification to child: %v", err)
+				} else {
+					log.Printf("[WebSocket] Successfully sent limit change notification to child")
+				}
 			} else {
-				log.Printf("[WebSocket] Successfully sent limit change push notifications to family %s", parentID)
+				log.Printf("[WebSocket] Error finding child with token: %v", result.Error)
 			}
 		}()
 	} else {
