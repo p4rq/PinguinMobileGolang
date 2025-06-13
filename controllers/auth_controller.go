@@ -3,10 +3,12 @@ package controllers
 import (
 	"PinguinMobile/models"
 	"PinguinMobile/services"
+	"PinguinMobile/websocket"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -335,6 +337,93 @@ func TokenVerify(c *gin.Context) {
 			updatedChild, err := childService.ReadChild(child.FirebaseUID)
 			if err == nil {
 				child = updatedChild
+
+				// Отправляем уведомление родителю об изменении разрешений
+				var familyData struct {
+					ParentFirebaseUID string `json:"parent_firebase_uid"`
+				}
+				ParentFirebaseUID := ""
+
+				// Извлекаем parentID из JSON в поле Family
+				if updatedChild.Family != "" {
+					if err := json.Unmarshal([]byte(updatedChild.Family), &familyData); err == nil {
+						ParentFirebaseUID = familyData.ParentFirebaseUID
+					} else {
+						fmt.Printf("[ERROR] Не удалось распарсить Family JSON: %v\n", err)
+					}
+				}
+
+				// Отправляем уведомление родителю об изменении разрешений
+				if ParentFirebaseUID != "" && WebSocketHub != nil {
+					// Получаем информацию о родителе
+					parent, err := parentService.ReadParent(ParentFirebaseUID)
+					if err == nil {
+						// Определяем, какие разрешения были изменены
+						changedPermissions := []string{}
+						if input.ScreenTimePermission != nil {
+							if *input.ScreenTimePermission {
+								changedPermissions = append(changedPermissions, "разрешение на контроль времени")
+							} else {
+								changedPermissions = append(changedPermissions, "отказ от контроля времени")
+							}
+						}
+						if input.AppearOnTop != nil {
+							if *input.AppearOnTop {
+								changedPermissions = append(changedPermissions, "разрешение на отображение поверх других приложений")
+							} else {
+								changedPermissions = append(changedPermissions, "отказ от отображения поверх других приложений")
+							}
+						}
+						if input.AlarmsPermission != nil {
+							if *input.AlarmsPermission {
+								changedPermissions = append(changedPermissions, "разрешение на будильники")
+							} else {
+								changedPermissions = append(changedPermissions, "отказ от будильников")
+							}
+						}
+
+						// Создаем текст уведомления
+						permissionsText := strings.Join(changedPermissions, ", ")
+						message := fmt.Sprintf("Ребенок %s изменил разрешения: %s",
+							child.Name, permissionsText)
+
+						// Отправляем уведомление WebSocket
+						go func() {
+							if WebSocketHub != nil {
+								wsMessage := websocket.WebSocketMessage{
+									Type:       "permissions_change",
+									ParentID:   parent.FirebaseUID,
+									ChildToken: child.DeviceToken,
+									SenderID:   "system",
+									SenderName: "Система",
+									Message:    message,
+									Timestamp:  time.Now(),
+								}
+								WebSocketHub.BroadcastMessage(wsMessage)
+
+								// Также отправляем push-уведомление
+								if parent.DeviceToken != "" && WebSocketHub.NotifySrv != nil {
+									data := map[string]string{
+										"type":       "permissions_change",
+										"child_name": child.Name,
+										"child_uid":  child.FirebaseUID,
+									}
+
+									WebSocketHub.NotifySrv.SendNotification(
+										parent.DeviceToken,
+										"Изменение разрешений",
+										message,
+										data,
+										parent.Lang,
+									)
+								}
+							}
+						}()
+
+						fmt.Printf("[INFO] Отправлено уведомление родителю %s об изменении разрешений ребенка %s\n",
+							parent.FirebaseUID, child.FirebaseUID)
+					}
+				}
 			}
 		}
 	}
