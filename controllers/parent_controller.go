@@ -1060,6 +1060,24 @@ func ManageOneTimeRules(c *gin.Context) {
 			}
 
 			fmt.Println("[ManageOneTimeRules] Успешная разблокировка по ID")
+			child, err := GetChildData(request.ChildFirebaseUID)
+			if err != nil {
+				fmt.Printf("[ERROR] ManageOneTimeRules: Не удалось получить данные ребенка для WebSocket: %v\n", err)
+			} else if child != nil && child.DeviceToken != "" {
+				fmt.Printf("[WebSocket] ManageOneTimeRules: Отправляем уведомление об отмене лимитов для ребенка %s\n", child.Name)
+				// Асинхронно отправляем уведомление через WebSocket
+				go NotifyLimitChange(request.ParentFirebaseUID, child.DeviceToken)
+				fmt.Printf("[WebSocket] ManageOneTimeRules: Уведомление поставлено в очередь\n")
+			} else {
+				var reason string
+				if child == nil {
+					reason = "ребенок не найден"
+				} else {
+					reason = "отсутствует device_token"
+				}
+				fmt.Printf("[WARN] ManageOneTimeRules: Не удалось отправить WebSocket уведомление (%s)\n", reason)
+			}
+
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "success",
 				"message": "One-time blocks successfully canceled",
