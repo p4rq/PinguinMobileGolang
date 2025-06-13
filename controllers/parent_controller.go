@@ -199,11 +199,15 @@ func MonitorChildUsage(c *gin.Context) {
 	var input struct {
 		ParentFirebaseUID string `json:"parent_firebase_uid" binding:"required"`
 		ChildFirebaseUID  string `json:"child_firebase_uid" binding:"required"`
+		Date              string `json:"date,omitempty"` // Опциональный параметр даты
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
 		return
 	}
+
+	fmt.Printf("[DEBUG] MonitorChildUsage: получен запрос для child=%s, parent=%s, date=%s\n",
+		input.ChildFirebaseUID, input.ParentFirebaseUID, input.Date)
 
 	_, err := parentService.ReadParent(input.ParentFirebaseUID)
 	if err != nil {
@@ -217,55 +221,111 @@ func MonitorChildUsage(c *gin.Context) {
 		return
 	}
 
-	// ИСПРАВЛЕНО: Правильно обрабатываем формат данных
-	var usageData interface{}
+	// Определяем дату для статистики
+	var dayStart time.Time
+	if input.Date != "" {
+		// Если дата указана в запросе, используем её
+		dayStart, err = time.Parse("2006-01-02", input.Date)
+		if err != nil {
+			fmt.Printf("[ERROR] Неверный формат даты: %s, ошибка: %v\n", input.Date, err)
+			dayStart = time.Now().Truncate(24 * time.Hour) // Используем текущий день
+		}
+	} else {
+		// По умолчанию используем текущий день
+		dayStart = time.Now().Truncate(24 * time.Hour)
+	}
 
-	// Если данные пустые, возвращаем пустой массив вместо null
+	// Форматируем время в UTC
+	dayStartFormatted := dayStart.UTC().Format(time.RFC3339)
+
+	fmt.Printf("[DEBUG] Данные использования перед парсингом: %s\n", child.UsageData)
+
+	// Подготавливаем данные об использовании
+	var usageData []interface{}
+
+	// Если данные пустые, возвращаем пустой массив
 	if child.UsageData == "" {
 		usageData = []interface{}{}
 	} else {
-		// Проверяем, является ли формат массивом (начинается с '[')
-		if len(child.UsageData) > 0 && child.UsageData[0] == '[' {
-			var dataArray []interface{}
-			if err := json.Unmarshal([]byte(child.UsageData), &dataArray); err == nil {
-				// Добавляем информацию о том, что это кумулятивные данные за день
-				result := map[string]interface{}{
-					"child_id":   child.FirebaseUID,
-					"name":       child.Name,
-					"usage_data": dataArray,
-					"data_type":  "cumulative_daily",                                       // Метка о типе данных
-					"day_start":  time.Now().Truncate(24 * time.Hour).Format(time.RFC3339), // Начало текущего дня
-				}
-				c.JSON(http.StatusOK, gin.H{"message": true, "data": result})
-				return
-			} else {
-				// Логируем ошибку разбора
-				fmt.Printf("Error parsing usage data array: %v\n", err)
-				usageData = []interface{}{}
-			}
-		} else {
-			// Если не массив, пробуем как объект
+		// Безопасно парсим данные как массив
+		if err := json.Unmarshal([]byte(child.UsageData), &usageData); err != nil {
+			fmt.Printf("[ERROR] Ошибка парсинга данных использования: %v\n", err)
+			fmt.Printf("[DEBUG] Содержимое UsageData: %s\n", child.UsageData)
+
+			// Второй вариант - если данные представлены как объект, а не массив
 			var dataObject map[string]interface{}
 			if err := json.Unmarshal([]byte(child.UsageData), &dataObject); err == nil {
-				usageData = dataObject
+				// Если это объект, упаковываем его в массив из одного элемента
+				usageData = []interface{}{dataObject}
 			} else {
-				// Логируем ошибку разбора
-				fmt.Printf("Error parsing usage data object: %v\n", err)
+				// Если и это не сработало, вернем пустой массив
 				usageData = []interface{}{}
+				fmt.Printf("[ERROR] Невозможно распарсить данные использования ни как массив, ни как объект\n")
 			}
 		}
 	}
+
+	// Нормализуем данные использования - обеспечиваем согласованность полей
+	normalizedUsageData := normalizeUsageData(usageData)
 
 	// Формируем результат
 	result := map[string]interface{}{
 		"child_id":   child.FirebaseUID,
 		"name":       child.Name,
-		"usage_data": usageData,
-		"data_type":  "cumulative_daily",                                       // Метка о типе данных
-		"day_start":  time.Now().Truncate(24 * time.Hour).Format(time.RFC3339), // Начало текущего дня
+		"usage_data": normalizedUsageData,
+		"data_type":  "cumulative_daily",
+		"day_start":  dayStartFormatted,
 	}
+
+	fmt.Printf("[DEBUG] Отправляем ответ с данными использования: %d записей\n", len(normalizedUsageData))
 	c.JSON(http.StatusOK, gin.H{"message": true, "data": result})
 }
+
+// Функция для нормализации данных использования
+func normalizeUsageData(rawData []interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(rawData))
+
+	for _, item := range rawData {
+		if appData, ok := item.(map[string]interface{}); ok {
+			// Создаем новую запись с согласованными полями
+			normalizedItem := map[string]interface{}{}
+
+			// Копируем и нормализуем поля
+			if app, exists := appData["app"]; exists {
+				normalizedItem["app"] = app
+			}
+
+			// Обрабатываем duration - может быть как число, так и строка
+			if duration, exists := appData["duration"]; exists {
+				normalizedItem["duration"] = duration
+			} else if duration, exists := appData["usage_time"]; exists {
+				normalizedItem["duration"] = duration
+			} else {
+				normalizedItem["duration"] = 0
+			}
+
+			// Нормализуем временные метки
+			if timestamp, exists := appData["timestamp"]; exists {
+				normalizedItem["timestamp"] = timestamp
+			}
+			if lastUpdated, exists := appData["last_updated"]; exists {
+				normalizedItem["last_updated"] = lastUpdated
+			} else if lastUpdated, exists := appData["lastUpdated"]; exists {
+				normalizedItem["last_updated"] = lastUpdated
+			}
+			if lastSend, exists := appData["lastSend"]; exists {
+				normalizedItem["last_send"] = lastSend
+			} else if lastSend, exists := appData["last_send"]; exists {
+				normalizedItem["last_send"] = lastSend
+			}
+
+			result = append(result, normalizedItem)
+		}
+	}
+
+	return result
+}
+
 func BlockApps(c *gin.Context) {
 	var request struct {
 		ParentFirebaseUID string   `json:"parentFirebaseUid" binding:"required"`
