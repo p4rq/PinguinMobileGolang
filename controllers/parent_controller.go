@@ -797,6 +797,8 @@ func ManageAppTimeRules(c *gin.Context) {
 		}
 
 		fmt.Println("[ManageAppTimeRules] Разблокировка приложений успешно выполнена")
+
+		// Отправляем уведомление через WebSocket
 		child, err := GetChildData(request.ChildFirebaseUID)
 		if err != nil {
 			fmt.Printf("[ERROR] ManageAppTimeRules: Не удалось получить данные ребенка для WebSocket: %v\n", err)
@@ -805,6 +807,14 @@ func ManageAppTimeRules(c *gin.Context) {
 			// Асинхронно отправляем уведомление через WebSocket
 			go NotifyLimitChange(request.ParentFirebaseUID, child.DeviceToken)
 			fmt.Printf("[WebSocket] ManageAppTimeRules: Уведомление поставлено в очередь\n")
+		} else {
+			var reason string
+			if child == nil {
+				reason = "ребенок не найден"
+			} else {
+				reason = "отсутствует device_token"
+			}
+			fmt.Printf("[WARN] ManageAppTimeRules: Не удалось отправить WebSocket уведомление (%s)\n", reason)
 		}
 		c.JSON(http.StatusOK, gin.H{"message": "Apps unblocked by time successfully"})
 	}

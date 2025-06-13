@@ -1150,7 +1150,10 @@ func (s *ParentService) ManageAppTimeRules(parentUID, childUID string, apps []st
 			}()
 		}
 	}
-
+	if operationResult == nil && WebSocketHub != nil {
+		WebSocketHub.NotifyLimitChange(parentUID, child.DeviceToken)
+		fmt.Printf("[WEBSOCKET] Отправлено уведомление о смене лимитов для ребенка %s\n", childUID)
+	}
 	return operationResult
 }
 
